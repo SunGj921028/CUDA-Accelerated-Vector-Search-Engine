@@ -1,0 +1,6 @@
+/build/
+/build-*/
+
+# Local IDE and compiler artifacts
+*.user
+*.suo
