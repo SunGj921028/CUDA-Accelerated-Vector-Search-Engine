@@ -30,12 +30,23 @@ struct SearchResult {
     const SearchHit& at(std::size_t query_index, std::size_t rank) const;
 };
 
+struct BackendTiming {
+    bool has_kernel_latency = false;
+    double kernel_latency_milliseconds = 0.0;
+};
+
 class SearchBackend {
 public:
     virtual ~SearchBackend() = default;
 
     virtual std::string name() const = 0;
     virtual SearchResult search(const SearchRequest& request) const = 0;
+
+    // Backends with a device-specific kernel timer can expose the timing for
+    // the most recent search. CPU and future backends can use the default.
+    virtual BackendTiming last_timing() const {
+        return {};
+    }
 };
 
 std::vector<float> compute_similarity_scores(

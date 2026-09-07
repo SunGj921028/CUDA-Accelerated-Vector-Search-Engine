@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <limits>
 #include <stdexcept>
 
@@ -39,6 +40,10 @@ BenchmarkResult benchmark_search(
     double min_milliseconds = std::numeric_limits<double>::max();
     double max_milliseconds = 0.0;
     double result_checksum = warmup_checksum;
+    bool has_kernel_timing = false;
+    double kernel_total_milliseconds = 0.0;
+    double kernel_min_milliseconds = std::numeric_limits<double>::max();
+    double kernel_max_milliseconds = 0.0;
 
     for (std::size_t iteration = 0;
          iteration < config.measured_iterations;
@@ -53,6 +58,21 @@ BenchmarkResult benchmark_search(
         min_milliseconds = std::min(min_milliseconds, elapsed);
         max_milliseconds = std::max(max_milliseconds, elapsed);
         result_checksum += checksum(result);
+
+        const BackendTiming timing = backend.last_timing();
+        if (timing.has_kernel_latency) {
+            if (!std::isfinite(timing.kernel_latency_milliseconds) ||
+                timing.kernel_latency_milliseconds < 0.0) {
+                throw std::runtime_error(
+                    "backend reported an invalid kernel latency");
+            }
+            has_kernel_timing = true;
+            kernel_total_milliseconds += timing.kernel_latency_milliseconds;
+            kernel_min_milliseconds = std::min(
+                kernel_min_milliseconds, timing.kernel_latency_milliseconds);
+            kernel_max_milliseconds = std::max(
+                kernel_max_milliseconds, timing.kernel_latency_milliseconds);
+        }
     }
 
     const double average_milliseconds =
@@ -69,6 +89,14 @@ BenchmarkResult benchmark_search(
                                              (average_milliseconds / 1000.0)
                                        : 0.0;
     benchmark.result_checksum = result_checksum;
+    benchmark.has_kernel_timing = has_kernel_timing;
+    if (has_kernel_timing) {
+        benchmark.kernel_min_milliseconds = kernel_min_milliseconds;
+        benchmark.kernel_average_milliseconds =
+            kernel_total_milliseconds /
+            static_cast<double>(config.measured_iterations);
+        benchmark.kernel_max_milliseconds = kernel_max_milliseconds;
+    }
     return benchmark;
 }
 

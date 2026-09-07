@@ -2,6 +2,10 @@
 #include "dataset.hpp"
 #include "vector_search.hpp"
 
+#if defined(VECTOR_SEARCH_ENABLE_CUDA)
+#include "cuda_backend.hpp"
+#endif
+
 #include <cstdint>
 #include <cstdlib>
 #include <exception>
@@ -11,6 +15,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 
 namespace {
 
@@ -167,7 +172,14 @@ std::string compiler_description() {
 
 std::string logical_processor_description() {
     const char* processor_count = std::getenv("NUMBER_OF_PROCESSORS");
-    return processor_count == nullptr ? "unknown" : processor_count;
+    if (processor_count != nullptr) {
+        return processor_count;
+    }
+
+    const unsigned int detected_processors = std::thread::hardware_concurrency();
+    return detected_processors == 0
+               ? "unknown"
+               : std::to_string(detected_processors);
 }
 
 void print_configuration(
@@ -175,10 +187,24 @@ void print_configuration(
     const vector_search::SearchBackend& backend) {
     std::cout << "backend=" << backend.name() << '\n'
               << "cpu_logical_processors="
-              << logical_processor_description() << '\n'
-              << "gpu=unavailable (M0 CPU-only)\n"
-              << "cuda=not built (M0)\n"
-              << "compiler=" << compiler_description() << '\n'
+              << logical_processor_description() << '\n';
+
+#if defined(VECTOR_SEARCH_ENABLE_CUDA)
+    const vector_search::CudaRuntimeInfo cuda_info =
+        vector_search::query_cuda_runtime_info();
+    if (cuda_info.available) {
+        std::cout << "gpu=" << cuda_info.device_name << '\n'
+                  << "cuda_toolkit=" << cuda_info.toolkit_version << '\n';
+    } else {
+        std::cout << "gpu=unavailable (" << cuda_info.error << ")\n"
+                  << "cuda_toolkit=unavailable\n";
+    }
+#else
+    std::cout << "gpu=unavailable (CUDA not enabled)\n"
+              << "cuda_toolkit=not built\n";
+#endif
+
+    std::cout << "compiler=" << compiler_description() << '\n'
               << "vectors=" << options.dataset.num_vectors << '\n'
               << "dim=" << options.dataset.dimension << '\n'
               << "queries=" << options.dataset.num_queries << '\n'
@@ -216,7 +242,7 @@ int run(int argc, char* argv[]) {
             vector_search::benchmark_search(
                 *backend, request, options.benchmark_config);
         std::cout << std::fixed << std::setprecision(3)
-                  << "timing_scope=search_only_dataset_generation_excluded\n"
+                  << "timing_scope=backend_search_dataset_generation_excluded\n"
                   << "warmup_iterations=" << result.warmup_iterations << '\n'
                   << "measured_iterations=" << result.measured_iterations << '\n'
                   << "latency_ms_min=" << result.min_milliseconds << '\n'
@@ -224,6 +250,18 @@ int run(int argc, char* argv[]) {
                   << "latency_ms_max=" << result.max_milliseconds << '\n'
                   << "queries_per_second=" << result.queries_per_second << '\n'
                   << "result_checksum=" << result.result_checksum << '\n';
+        if (result.has_kernel_timing) {
+            std::cout << "kernel_timing_scope=cuda_similarity_kernel_only_cuda_events\n"
+                      << "kernel_latency_ms_min="
+                      << result.kernel_min_milliseconds << '\n'
+                      << "kernel_latency_ms_average="
+                      << result.kernel_average_milliseconds << '\n'
+                      << "kernel_latency_ms_max="
+                      << result.kernel_max_milliseconds << '\n'
+                      << "end_to_end_timing_scope=allocation_h2d_kernel_d2h_cpu_topk\n"
+                      << "end_to_end_latency_ms_average="
+                      << result.average_milliseconds << '\n';
+        }
         return 0;
     }
 

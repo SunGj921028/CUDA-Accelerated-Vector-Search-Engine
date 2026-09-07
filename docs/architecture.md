@@ -84,7 +84,9 @@ D = 128
     768
 ```
 
-The system should automatically scale the workload according to available GPU memory.
+Workloads should respect available GPU memory. M1 reports CUDA allocation
+failures rather than implementing chunking or automatic scaling; those are
+future design options.
 
 ---
 
@@ -143,6 +145,7 @@ cuda-vector-search/
 │   ├── vector_search.hpp
 │   ├── dataset.hpp
 │   ├── benchmark.hpp
+│   ├── cuda_backend.hpp
 │   └── cuda_utils.hpp
 │
 ├── src/
@@ -158,13 +161,11 @@ cuda-vector-search/
 │   │
 │   └── cuda/
 │       ├── naive_search.cu
-│       ├── block_search.cu
-│       ├── optimized_search.cu
-│       └── gpu_topk.cu
+│       └── README.md
 │
 ├── tests/
 │   ├── test_cpu.cpp
-│   ├── test_cuda.cu
+│   ├── test_cuda.cpp
 │   └── test_correctness.cpp
 │
 ├── benchmarks/
@@ -261,19 +262,28 @@ Example:
 
 ## M1 — Naive CUDA Implementation
 
-Implement the first CUDA kernel with intentionally simple parallelization.
-
-Example strategy:
-
-```
-one CUDA thread → one database vector
-```
-
-Each thread computes:
+The M1 backend uses intentionally simple parallelization over all query/vector
+pairs:
 
 ```
-score[i] = dot(query, database[i])
+one CUDA thread → one (query, database-vector) pair
 ```
+
+For `Q` queries and `N` database vectors, the kernel launches `Q * N` logical
+threads. Each thread computes:
+
+```
+idx = global thread index
+query_idx = idx / N
+vector_idx = idx % N
+scores[idx] = dot(queries[query_idx], database[vector_idx])
+```
+
+The thread sequentially processes all `D` dimensions and uses a fixed 256
+threads per block. The host copies the database and queries to device memory,
+copies the complete score array back, and reuses the existing CPU Top-K
+selection. CUDA Events measure kernel-only latency while the backend call's
+host timing measures the end-to-end M1 pipeline.
 
 Learning objectives:
 
@@ -282,7 +292,7 @@ Learning objectives:
 * cudaMemcpy
 * kernel launch
 * thread/block/grid indexing
-* cudaDeviceSynchronize
+* cudaEventSynchronize
 * CUDA error handling
 * cudaEvent timing
 

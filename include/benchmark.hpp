@@ -19,6 +19,10 @@ struct BenchmarkResult {
     double max_milliseconds = 0.0;
     double queries_per_second = 0.0;
     double result_checksum = 0.0;
+    bool has_kernel_timing = false;
+    double kernel_min_milliseconds = 0.0;
+    double kernel_average_milliseconds = 0.0;
+    double kernel_max_milliseconds = 0.0;
 };
 
 BenchmarkResult benchmark_search(

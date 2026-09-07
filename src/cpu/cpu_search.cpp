@@ -1,5 +1,7 @@
 #include "vector_search.hpp"
 
+#include "cuda_backend.hpp"
+
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -110,9 +112,19 @@ std::unique_ptr<SearchBackend> create_backend(const std::string& backend_name) {
         return std::make_unique<CpuSearchBackend>();
     }
 
+    if (backend_name == "cuda-naive") {
+#if defined(VECTOR_SEARCH_ENABLE_CUDA)
+        return create_cuda_naive_backend();
+#else
+        throw std::invalid_argument(
+            "backend 'cuda-naive' is unavailable; configure with "
+            "-DENABLE_CUDA=ON");
+#endif
+    }
+
     throw std::invalid_argument(
         "unknown backend '" + backend_name +
-        "'; M0 provides only the cpu backend");
+        "'; available backends are cpu and, when enabled, cuda-naive");
 }
 
 }  // namespace vector_search

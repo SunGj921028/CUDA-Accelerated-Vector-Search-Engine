@@ -1,5 +1,8 @@
-# CUDA backend placeholder
+# CUDA backends
 
-CUDA kernels are intentionally not part of Milestone M0. The backend-neutral
-interface in `include/vector_search.hpp` reserves the integration point for
-the M1 CUDA implementation.
+Milestone M1 provides `naive_search.cu`, selected through the backend name
+`cuda-naive`. It deliberately uses one CUDA thread per complete
+query/database-vector dot product and leaves Top-K selection on the CPU.
+
+Later CUDA implementations must remain separate backends so the M1 kernel can
+continue to serve as a correctness and performance baseline.
