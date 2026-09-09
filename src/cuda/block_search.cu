@@ -4,14 +4,12 @@
 
 #include <cuda_runtime.h>
 
-#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <iostream>
 #include <limits>
 #include <memory>
-#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -19,6 +17,8 @@
 namespace vector_search {
 namespace {
 
+// M3 keeps the block size fixed so the experiment changes only the
+// thread/data mapping and reduction strategy relative to cuda-naive.
 constexpr unsigned int kThreadsPerBlock = 256;
 
 std::size_t checked_product(std::size_t left, std::size_t right) {
@@ -53,12 +53,6 @@ void validate_search_request(const SearchRequest& request) {
         throw std::invalid_argument(
             "topk must be greater than zero and no greater than num_vectors");
     }
-}
-
-std::string format_cuda_version(int version) {
-    std::ostringstream formatted;
-    formatted << version / 1000 << '.' << (version % 1000) / 10;
-    return formatted.str();
 }
 
 void report_cleanup_error(
@@ -180,35 +174,59 @@ float measure_synchronous_cuda_copy(
     return milliseconds;
 }
 
-__global__ void naive_similarity_kernel(
+// M3 maps one block to one query/database-vector pair. Threads in a warp
+// therefore walk adjacent dimensions of the same row before reducing their
+// partial dot products through shared memory.
+__global__ void block_similarity_kernel(
     const float* database,
     const float* queries,
     float* scores,
     std::size_t num_vectors,
     std::size_t dimension,
     std::size_t total_pairs) {
-    const std::size_t pair_index =
-        static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    const std::size_t pair_index = static_cast<std::size_t>(blockIdx.x);
     if (pair_index >= total_pairs) {
         return;
     }
 
     const std::size_t query_index = pair_index / num_vectors;
     const std::size_t vector_index = pair_index % num_vectors;
-    const float* query = queries + query_index * dimension;
-    const float* database_vector = database + vector_index * dimension;
+    const std::size_t query_base = query_index * dimension;
+    const std::size_t database_base = vector_index * dimension;
 
-    float score = 0.0F;
-    for (std::size_t column = 0; column < dimension; ++column) {
-        score += query[column] * database_vector[column];
+    float partial = 0.0F;
+    for (std::size_t dimension_index = threadIdx.x;
+         dimension_index < dimension;
+         dimension_index += blockDim.x) {
+        partial += queries[query_base + dimension_index] *
+                   database[database_base + dimension_index];
     }
-    scores[pair_index] = score;
+
+    // The launch always uses 256 threads, so this shared array is reduction
+    // state only. Every thread writes before the first barrier, including
+    // threads with no dimension to process when D < blockDim.x.
+    __shared__ float partials[kThreadsPerBlock];
+    partials[threadIdx.x] = partial;
+    __syncthreads();
+
+    for (unsigned int offset = blockDim.x / 2;
+         offset > 0;
+         offset >>= 1) {
+        if (threadIdx.x < offset) {
+            partials[threadIdx.x] += partials[threadIdx.x + offset];
+        }
+        __syncthreads();
+    }
+
+    if (threadIdx.x == 0) {
+        scores[pair_index] = partials[0];
+    }
 }
 
-class CudaNaiveSearchBackend final : public SearchBackend {
+class CudaBlockSearchBackend final : public SearchBackend {
 public:
     std::string name() const override {
-        return "cuda-naive";
+        return "cuda-block";
     }
 
     SearchResult search(const SearchRequest& request) const override {
@@ -234,10 +252,11 @@ public:
         cudaDeviceProp properties{};
         VECTOR_SEARCH_CUDA_CHECK(cudaGetDeviceProperties(&properties, device));
 
-        const std::size_t block_count =
-            total_pairs / kThreadsPerBlock +
-            (total_pairs % kThreadsPerBlock == 0 ? 0 : 1);
-        if (block_count > static_cast<std::size_t>(properties.maxGridSize[0])) {
+        // Unlike M1, each logical pair is a block, so no ceil-divide is
+        // needed. The explicit limit keeps the unsigned launch conversion
+        // safe for larger size_t workloads.
+        if (total_pairs >
+            static_cast<std::size_t>(properties.maxGridSize[0])) {
             throw std::length_error(
                 "CUDA workload requires more blocks than the device supports");
         }
@@ -300,8 +319,8 @@ public:
         kernel_stop.create();
         kernel_start.record();
 
-        naive_similarity_kernel<<<
-            static_cast<unsigned int>(block_count), kThreadsPerBlock>>>(
+        block_similarity_kernel<<<
+            static_cast<unsigned int>(total_pairs), kThreadsPerBlock>>>(
             device_database.get(),
             device_queries.get(),
             device_scores.get(),
@@ -399,46 +418,8 @@ private:
 
 }  // namespace
 
-CudaRuntimeInfo query_cuda_runtime_info() {
-    CudaRuntimeInfo info;
-
-    int device_count = 0;
-    const cudaError_t count_status = cudaGetDeviceCount(&device_count);
-    if (count_status != cudaSuccess) {
-        info.error = cuda_detail::format_cuda_error(
-            count_status, "cudaGetDeviceCount");
-        return info;
-    }
-    if (device_count == 0) {
-        info.error = "no CUDA device was reported";
-        return info;
-    }
-
-    int device = 0;
-    const cudaError_t device_status = cudaGetDevice(&device);
-    if (device_status != cudaSuccess) {
-        info.error = cuda_detail::format_cuda_error(
-            device_status, "cudaGetDevice");
-        return info;
-    }
-
-    cudaDeviceProp properties{};
-    const cudaError_t properties_status =
-        cudaGetDeviceProperties(&properties, device);
-    if (properties_status != cudaSuccess) {
-        info.error = cuda_detail::format_cuda_error(
-            properties_status, "cudaGetDeviceProperties");
-        return info;
-    }
-
-    info.available = true;
-    info.device_name = properties.name;
-    info.toolkit_version = format_cuda_version(CUDART_VERSION);
-    return info;
-}
-
-std::unique_ptr<SearchBackend> create_cuda_naive_backend() {
-    return std::make_unique<CudaNaiveSearchBackend>();
+std::unique_ptr<SearchBackend> create_cuda_block_backend() {
+    return std::make_unique<CudaBlockSearchBackend>();
 }
 
 }  // namespace vector_search

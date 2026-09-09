@@ -122,9 +122,40 @@ std::unique_ptr<SearchBackend> create_backend(const std::string& backend_name) {
 #endif
     }
 
+    if (backend_name == "cuda-block") {
+#if defined(VECTOR_SEARCH_ENABLE_CUDA)
+        return create_cuda_block_backend();
+#else
+        throw std::invalid_argument(
+            "backend 'cuda-block' is unavailable; configure with "
+            "-DENABLE_CUDA=ON");
+#endif
+    }
+
+    if (backend_name == "cuda-warp") {
+#if defined(VECTOR_SEARCH_ENABLE_CUDA)
+        return create_cuda_warp_backend();
+#else
+        throw std::invalid_argument(
+            "backend 'cuda-warp' is unavailable; configure with "
+            "-DENABLE_CUDA=ON");
+#endif
+    }
+
+    if (backend_name == "cuda-warp-resident") {
+#if defined(VECTOR_SEARCH_ENABLE_CUDA)
+        return create_cuda_warp_resident_backend();
+#else
+        throw std::invalid_argument(
+            "backend 'cuda-warp-resident' is unavailable; configure with "
+            "-DENABLE_CUDA=ON");
+#endif
+    }
+
     throw std::invalid_argument(
         "unknown backend '" + backend_name +
-        "'; available backends are cpu and, when enabled, cuda-naive");
+        "'; available backends are cpu and, when enabled, cuda-naive and "
+        "cuda-block and cuda-warp and cuda-warp-resident");
 }
 
 }  // namespace vector_search

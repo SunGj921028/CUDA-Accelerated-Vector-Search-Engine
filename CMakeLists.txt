@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-option(ENABLE_CUDA "Build the cuda-naive backend" OFF)
+option(ENABLE_CUDA "Build the cuda-naive, cuda-block, cuda-warp, and cuda-warp-resident backends" OFF)
 option(VECTOR_SEARCH_BUILD_TESTS "Build the CPU correctness tests" ON)
 
 if(ENABLE_CUDA)
@@ -28,6 +28,9 @@ add_library(vector_search_core
 if(ENABLE_CUDA)
     target_sources(vector_search_core PRIVATE
         src/cuda/naive_search.cu
+        src/cuda/block_search.cu
+        src/cuda/warp_search.cu
+        src/cuda/resident_search.cu
     )
 endif()
 

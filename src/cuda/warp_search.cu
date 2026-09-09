@@ -4,14 +4,12 @@
 
 #include <cuda_runtime.h>
 
-#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <iostream>
 #include <limits>
 #include <memory>
-#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -19,7 +17,12 @@
 namespace vector_search {
 namespace {
 
+// M4 keeps the first experiment fixed at 256 threads, or eight CUDA warps,
+// so the controlled variable is the per-warp mapping and reduction scope.
 constexpr unsigned int kThreadsPerBlock = 256;
+constexpr unsigned int kWarpSize = 32;
+constexpr unsigned int kWarpsPerBlock = kThreadsPerBlock / kWarpSize;
+static_assert(kThreadsPerBlock % kWarpSize == 0);
 
 std::size_t checked_product(std::size_t left, std::size_t right) {
     if (left != 0 && right > std::numeric_limits<std::size_t>::max() / left) {
@@ -53,12 +56,6 @@ void validate_search_request(const SearchRequest& request) {
         throw std::invalid_argument(
             "topk must be greater than zero and no greater than num_vectors");
     }
-}
-
-std::string format_cuda_version(int version) {
-    std::ostringstream formatted;
-    formatted << version / 1000 << '.' << (version % 1000) / 10;
-    return formatted.str();
 }
 
 void report_cleanup_error(
@@ -180,35 +177,61 @@ float measure_synchronous_cuda_copy(
     return milliseconds;
 }
 
-__global__ void naive_similarity_kernel(
+// M4 maps one warp to one query/database-vector pair. Lanes walk adjacent
+// dimensions, preserving M3's coalesced row-major loads, then reduce only
+// within that warp using a synchronized shuffle mask.
+__global__ void warp_similarity_kernel(
     const float* database,
     const float* queries,
     float* scores,
     std::size_t num_vectors,
     std::size_t dimension,
     std::size_t total_pairs) {
-    const std::size_t pair_index =
-        static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
-    if (pair_index >= total_pairs) {
+    const unsigned int lane_id = threadIdx.x % warpSize;
+    const unsigned int warp_id_in_block = threadIdx.x / warpSize;
+    const std::size_t global_warp_id =
+        static_cast<std::size_t>(blockIdx.x) * kWarpsPerBlock +
+        warp_id_in_block;
+    const std::size_t pair_index = global_warp_id;
+    const bool pair_is_valid = pair_index < total_pairs;
+
+    // Every lane reaches this ballot before any lane can return. A valid
+    // pair occupies a complete warp because pair_index is warp-uniform; an
+    // invalid tail warp returns without entering the shuffle reduction.
+    const unsigned int active_mask =
+        __ballot_sync(0xffffffffU, pair_is_valid);
+    if (!pair_is_valid) {
         return;
     }
 
     const std::size_t query_index = pair_index / num_vectors;
     const std::size_t vector_index = pair_index % num_vectors;
-    const float* query = queries + query_index * dimension;
-    const float* database_vector = database + vector_index * dimension;
+    const std::size_t query_base = query_index * dimension;
+    const std::size_t database_base = vector_index * dimension;
 
-    float score = 0.0F;
-    for (std::size_t column = 0; column < dimension; ++column) {
-        score += query[column] * database_vector[column];
+    float partial = 0.0F;
+    for (std::size_t dimension_index = lane_id;
+         dimension_index < dimension;
+         dimension_index += warpSize) {
+        partial += queries[query_base + dimension_index] *
+                   database[database_base + dimension_index];
     }
-    scores[pair_index] = score;
+
+    for (int offset = static_cast<int>(warpSize / 2);
+         offset > 0;
+         offset >>= 1) {
+        partial += __shfl_down_sync(active_mask, partial, offset);
+    }
+
+    if (lane_id == 0) {
+        scores[pair_index] = partial;
+    }
 }
 
-class CudaNaiveSearchBackend final : public SearchBackend {
+class CudaWarpSearchBackend final : public SearchBackend {
 public:
     std::string name() const override {
-        return "cuda-naive";
+        return "cuda-warp";
     }
 
     SearchResult search(const SearchRequest& request) const override {
@@ -234,10 +257,14 @@ public:
         cudaDeviceProp properties{};
         VECTOR_SEARCH_CUDA_CHECK(cudaGetDeviceProperties(&properties, device));
 
+        // Each block contains eight independent pair warps. The
+        // ceil-divide leaves the final block partially populated when the
+        // pair count is not divisible by eight.
         const std::size_t block_count =
-            total_pairs / kThreadsPerBlock +
-            (total_pairs % kThreadsPerBlock == 0 ? 0 : 1);
-        if (block_count > static_cast<std::size_t>(properties.maxGridSize[0])) {
+            total_pairs / kWarpsPerBlock +
+            (total_pairs % kWarpsPerBlock == 0 ? 0U : 1U);
+        if (block_count >
+            static_cast<std::size_t>(properties.maxGridSize[0])) {
             throw std::length_error(
                 "CUDA workload requires more blocks than the device supports");
         }
@@ -300,7 +327,7 @@ public:
         kernel_stop.create();
         kernel_start.record();
 
-        naive_similarity_kernel<<<
+        warp_similarity_kernel<<<
             static_cast<unsigned int>(block_count), kThreadsPerBlock>>>(
             device_database.get(),
             device_queries.get(),
@@ -399,46 +426,8 @@ private:
 
 }  // namespace
 
-CudaRuntimeInfo query_cuda_runtime_info() {
-    CudaRuntimeInfo info;
-
-    int device_count = 0;
-    const cudaError_t count_status = cudaGetDeviceCount(&device_count);
-    if (count_status != cudaSuccess) {
-        info.error = cuda_detail::format_cuda_error(
-            count_status, "cudaGetDeviceCount");
-        return info;
-    }
-    if (device_count == 0) {
-        info.error = "no CUDA device was reported";
-        return info;
-    }
-
-    int device = 0;
-    const cudaError_t device_status = cudaGetDevice(&device);
-    if (device_status != cudaSuccess) {
-        info.error = cuda_detail::format_cuda_error(
-            device_status, "cudaGetDevice");
-        return info;
-    }
-
-    cudaDeviceProp properties{};
-    const cudaError_t properties_status =
-        cudaGetDeviceProperties(&properties, device);
-    if (properties_status != cudaSuccess) {
-        info.error = cuda_detail::format_cuda_error(
-            properties_status, "cudaGetDeviceProperties");
-        return info;
-    }
-
-    info.available = true;
-    info.device_name = properties.name;
-    info.toolkit_version = format_cuda_version(CUDART_VERSION);
-    return info;
-}
-
-std::unique_ptr<SearchBackend> create_cuda_naive_backend() {
-    return std::make_unique<CudaNaiveSearchBackend>();
+std::unique_ptr<SearchBackend> create_cuda_warp_backend() {
+    return std::make_unique<CudaWarpSearchBackend>();
 }
 
 }  // namespace vector_search

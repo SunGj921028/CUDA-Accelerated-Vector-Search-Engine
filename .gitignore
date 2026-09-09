@@ -1,6 +1,14 @@
 /build/
 /build-*/
 
+# Nsight reports are large binary artifacts; M2 scripts default to /tmp.
+/profiling-results/
+*.nsys-rep
+*.ncu-rep
+*.qdrep
+*.sqlite
+
 # Local IDE and compiler artifacts
 *.user
 *.suo
+__pycache__/

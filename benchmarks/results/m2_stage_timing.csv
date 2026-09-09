@@ -1,0 +1,5 @@
+N,D,Q,K,seed,warmup_iterations,measured_iterations,allocation_ms,h2d_database_ms,h2d_queries_ms,kernel_ms,d2h_scores_ms,cpu_topk_ms,cleanup_ms,total_e2e_ms,benchmark_e2e_ms,cpu_logical_processors,gpu,cuda_toolkit,compiler
+10000,128,4,10,42,2,5,0.481,0.613,0.058,0.195,0.074,0.275,0.361,2.246,2.247,20,NVIDIA GeForce RTX 3050 Ti Laptop GPU,12.9,GCC 11.4.0
+100000,128,4,10,42,2,5,0.837,4.534,0.129,3.523,0.287,2.481,0.656,13.885,13.886,20,NVIDIA GeForce RTX 3050 Ti Laptop GPU,12.9,GCC 11.4.0
+100000,256,4,10,42,2,5,1.32,10.86,0.13,18.909,0.486,2.202,1.057,37.76,37.762,20,NVIDIA GeForce RTX 3050 Ti Laptop GPU,12.9,GCC 11.4.0
+100000,768,4,10,42,2,5,1.694,31.888,0.116,64.144,0.612,2.398,2.149,110.006,110.008,20,NVIDIA GeForce RTX 3050 Ti Laptop GPU,12.9,GCC 11.4.0

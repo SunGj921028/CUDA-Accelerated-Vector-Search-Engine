@@ -2,17 +2,17 @@
 
 This repository is an educational exact vector-search engine built in stages.
 M0 is the deterministic CPU reference implementation. M1 adds the intentionally
-naive `cuda-naive` backend as a measurable CUDA baseline; later milestones may
-add separate backends without changing the backend-neutral search contract.
+naive cuda-naive backend as a measurable CUDA baseline. M3 and M4 add
+separate block-per-vector and warp-per-vector kernels, and M5 adds an explicit
+GPU-resident database lifecycle without changing the stateless backend contract.
 
 The project computes exact dot-product similarity for normalized FP32 vectors
 and returns deterministic Top-K results. Equal scores are ordered by vector
-index. It does not include approximate nearest-neighbor search, a vector
-database, RAG, LLM integration, or third-party search libraries.
+index. It does not include approximate nearest-neighbor search, a
+general-purpose vector database, RAG, LLM integration, or third-party search
+libraries.
 
-## Current M1 environment
-
-The tested CUDA environment is:
+## Current M5 environment
 
 - Ubuntu 22.04.4 LTS under WSL2;
 - NVIDIA GeForce RTX 3050 Laptop GPU class hardware (the validation host
@@ -177,6 +177,47 @@ M1 does not chunk or stream workloads. CUDA allocation failures are surfaced as
 errors. In particular, do not use `1,000,000 x 768` as a normal M1 benchmark
 on a 4 GB GPU.
 
+## M2 profiling and latency decomposition
+
+Detailed stage timing is opt-in so the normal `cuda-naive` benchmark remains
+the M1 baseline measurement. Use `--timing-breakdown` with a benchmark to
+report average timings for allocation, H2D database/query copies, the
+similarity kernel, D2H score copy, CPU Top-K, cleanup, and the measured
+end-to-end backend call:
+
+```bash
+./build-cuda/vector_search --backend cuda-naive \
+    --vectors 100000 --dim 768 --queries 4 --topk 10 --seed 42 \
+    --benchmark --timing-breakdown --warmup 2 --iterations 5
+```
+
+CUDA Events measure the synchronous H2D, kernel, and D2H stages. Host
+`steady_clock` measures allocation, CPU Top-K, cleanup, and the fully
+synchronized backend call. The stage sum is diagnostic and is not forced to
+equal the end-to-end value; event creation, host container allocation, device
+metadata queries, and measurement boundaries can remain outside the listed
+components.
+
+The standard-library benchmark runner writes small CSV files for the required
+crossover sweep, dimension sweep, and representative stage breakdown:
+
+```bash
+python3 scripts/run_m2_benchmarks.py --binary build-cuda/vector_search
+```
+
+The Nsight Systems and Nsight Compute command wrappers are:
+
+```bash
+scripts/profile_nsys.sh build-cuda/vector_search
+scripts/profile_ncu.sh build-cuda/vector_search
+```
+
+Both default to temporary output directories. The Nsight Compute wrapper
+collects focused SpeedOfLight, MemoryWorkloadAnalysis, Occupancy, LaunchStats,
+and WarpStateStats sections for one `D=768` naive-kernel launch. Under WSL2,
+GPU performance-counter access may need to be enabled on the Windows host;
+the wrapper reports `ERR_NVGPUCTRPERM` without changing security settings.
+
 ## Known CMake warning
 
 On the validation WSL2 host, CMake prints:
@@ -190,3 +231,51 @@ This is a pre-existing environment warning caused by CMake resolving the
 `/usr/local/lib` libcurl. It is separate from CUDA. If configure, build, and
 tests complete, it is not treated as an M1 failure. Do not delete, replace, or
 modify `/usr/local/lib/libcurl*`.
+
+
+## M5 GPU-resident database
+
+The cuda-warp-resident backend makes the database lifecycle explicit. Prepare
+the database once, issue multiple searches, and then clear or destroy the
+backend:
+
+~~~text
+prepare_database -> search(batch 1) -> search(batch 2) -> ... -> clear_database
+~~~
+
+The existing cuda-warp backend remains stateless and still performs database
+allocation and H2D upload on every search. The resident backend does not alter
+the M4 warp kernel, query/score buffer policy, or CPU Top-K path.
+
+For the repeated-query CLI experiment, use the same database with sequential
+query batches:
+
+~~~bash
+./build-m5-cuda-wsl/vector_search \
+    --backend cuda-warp-resident \
+    --vectors 100000 --dim 768 --queries 4 --topk 10 --seed 42 \
+    --timing-breakdown --warmup 2 --repeat-batches 100
+~~~
+
+The output separates database preparation fields from warm query fields. Use
+the M5 runner to compare stateless and resident backends, including cold
+start, warm means/medians, amortization at 1/2/5/10/20/100 batches, D=128,
+D=256, D=768, and the optional 250K workload:
+
+~~~bash
+python3 scripts/run_m5_benchmarks.py \
+    --binary build-m5-cuda-wsl/vector_search \
+    --output-dir benchmarks/results \
+    --warmup 2 --iterations 100 --include-250k
+~~~
+
+The representative system-level trace is captured with:
+
+~~~bash
+bash scripts/profile_m5_nsys.sh \
+    build-m5-cuda-wsl/vector_search profiling/nsys/m5
+~~~
+
+M5 is intended for repeated searches against an unchanged database. Its cold
+path includes preparation and can be slower than a one-shot stateless search;
+warm latency must not be described as startup latency.

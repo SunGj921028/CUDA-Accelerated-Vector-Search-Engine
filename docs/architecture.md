@@ -312,7 +312,18 @@ CPU vs Naive CUDA
 
 ---
 
-## M2 — Parallel Reduction Kernel
+## M2 — Profiling, Latency Decomposition, and Bottleneck Analysis
+
+The active M2 milestone is analysis and instrumentation of the unchanged M1
+`cuda-naive` backend. It measures CUDA end-to-end stages, compares them with
+kernel-only CUDA Event timing, captures Nsight Systems timelines when
+available, and investigates the frozen kernel with focused Nsight Compute
+metrics when available. M2 must not change the thread/data mapping, sequential
+dimension loop, fixed 256-thread block, full score D2H transfer, or CPU Top-K.
+The reproducible benchmark and profiling commands are documented in
+`docs/performance_report.md`.
+
+## M3 — Parallel Reduction Kernel
 
 Redesign the similarity computation.
 
@@ -359,115 +370,129 @@ Document WHY the performance changes.
 
 ---
 
-## M3 — Memory Optimization
+## M4 — Warp-Per-Vector Reduction
 
-Profile the kernel before changing it.
+M4 is the final kernel-optimization milestone before the system-level work.
+It keeps the M3 adjacent-dimension load mapping but changes the reduction
+scope:
 
-Investigate:
+~~~text
+256 threads/block = 8 warps/block
+one warp -> one (query, database-vector) pair
+lane l -> dimensions l, l + 32, l + 64, ...
+warp reduction -> __shfl_down_sync offsets 16, 8, 4, 2, 1
+~~~
 
-* global memory throughput
-* memory access efficiency
-* memory coalescing
-* shared memory usage
-* occupancy
-* registers
-* block size
-* warp efficiency
+The exact M4 behavior is preserved in the cuda-warp backend: 256 threads per
+block, eight warps per block, lane-strided dimensions, ballot-derived tail
+mask, shuffle-down reduction, and lane-0 score stores. cuda-naive and
+cuda-block remain separate algorithmic baselines.
 
-Experiment with:
+The host pipeline remains:
 
-* different block sizes
-* vectorized memory access where appropriate
-* query-vector reuse
-* shared-memory caching
-* reduced redundant global-memory access
+~~~text
+database allocation -> synchronous database H2D -> query H2D
+-> warp similarity kernel -> full score D2H -> CPU Top-K -> cleanup
+~~~
 
-Do not blindly apply optimizations.
-
-Every optimization must follow:
-
-```
-hypothesis
-    ↓
-profiler evidence
-    ↓
-implementation
-    ↓
-benchmark
-    ↓
-accept / reject
-```
-
-Record experiments in:
-
-```
-docs/optimization_log.md
-```
-
-Example:
-
-```
-Optimization:
-Change block size from 256 → 128
-
-Hypothesis:
-Higher occupancy may hide memory latency.
-
-Result:
-Kernel latency decreased from X ms → Y ms.
-
-Conclusion:
-Keep / reject change.
-```
+M4 performance conclusions and profiler evidence are recorded in
+docs/optimization_log.md and docs/performance_report.md. M4 does not
+introduce persistent data, streams, pinned memory, asynchronous copies,
+layout changes, GPU Top-K, or automatic backend selection.
 
 ---
 
-## M4 — Top-K Optimization
+## M5 — Persistent GPU-Resident Vector Database
 
-Initial implementation:
+M5 is the first system-level optimization milestone. The CUDA similarity
+kernel is frozen at the M4 warp-per-vector behavior; the controlled variable is
+the lifetime of the database allocation and its host-to-device upload.
 
-```
-GPU similarity
-    ↓
-copy all scores GPU → CPU
-    ↓
-CPU Top-K
-```
+The stateless cuda-warp backend remains the M4 baseline. It performs
+allocation, database H2D, query H2D, kernel execution, score D2H, CPU Top-K,
+and cleanup for every search() call. The new cuda-warp-resident backend
+uses an explicit stateful lifecycle:
 
-This is deliberately simple.
+~~~text
+create backend
+    -> prepare_database(database)
+    -> search(query batch 1)
+    -> search(query batch 2)
+    -> ...
+    -> reload_database(database) or clear_database()
+    -> destroy backend
+~~~
 
-Profile the complete pipeline.
+The public lifecycle is represented by ResidentSearchBackend:
 
-If score transfer becomes significant, move Top-K processing onto the GPU.
+~~~cpp
+prepare_database(DatabaseRequest)
+reload_database(DatabaseRequest)
+clear_database()
+database_is_prepared()
+database_info()
+search(SearchRequest)
+~~~
 
-Possible progression:
+prepare_database() validates the database, allocates device storage, uploads
+the FP32 database once, records preparation timing, and keeps the allocation
+alive. Calling it again for the same host pointer, vector count, and dimension
+is idempotent. reload_database() explicitly reuploads, including when the
+host pointer is unchanged. A changed pointer, vector count, or dimension is
+treated as a new database. clear_database() releases the device allocation.
 
-```
-CPU Top-K
+A resident search validates the prepared vector count and dimension. It accepts
+a null database pointer because the device database is already selected, or the
+same prepared host pointer for an explicit identity check. It allocates and
+frees query and score buffers per request to keep the M4 comparison fair.
+Database allocation and database H2D therefore occur only during preparation;
+query H2D, the frozen kernel, score D2H, CPU Top-K, and query cleanup remain
+per-search work.
 
-    ↓
+Preparation timing is reported separately as:
 
-GPU library-based Top-K / sorting reference
+~~~text
+db_allocation_ms
+db_h2d_ms
+prepare_total_ms
+~~~
 
-    ↓
+Warm query timing is reported separately as:
 
-custom GPU Top-K or block-level selection
-(optional advanced implementation)
-```
+~~~text
+query_allocation_ms
+query_h2d_ms
+kernel_ms
+query_d2h_scores_ms
+query_cpu_topk_ms
+query_cleanup_ms
+query_e2e_ms
+~~~
 
-The important engineering story is:
+Cold-start cost is prepare_total_ms + first query E2E; warm/steady-state
+latency excludes the one-time preparation. The benchmark runner also reports
+amortized cost for 1, 2, 5, 10, 20, and 100 measured query batches.
 
-```
-Profiling revealed unnecessary GPU→CPU transfer.
+M5 intentionally does not add CUDA streams, pinned memory, asynchronous
+memcpy, temporary-buffer reuse, database transposition, vectorized loads,
+query shared-memory caching, GPU Top-K, cuBLAS, CUB, Thrust, FP16, Tensor
+Cores, approximate search, or any new kernel tuning. The only persistence
+change is the database device allocation and upload.
 
-Therefore Top-K was moved closer to the computation.
-```
+The resident implementation uses RAII for device buffers and CUDA events.
+Allocation, copy, event, kernel-launch, synchronization, memory-info, and
+cleanup CUDA operations are checked. Failed preparation leaves the backend
+unprepared, and search-before-prepare, incompatible requests, reload, and
+cleanup are explicit error-tested lifecycle states.
 
-This provides a stronger system-level optimization story than simply implementing another kernel.
+The controlled M5 benchmark is
+scripts/run_m5_benchmarks.py. It compares cuda-warp and
+cuda-warp-resident with the same generated database and sequential query
+contents. The representative Nsight Systems trace is produced by
+scripts/profile_m5_nsys.sh; its purpose is to make the one database H2D
+upload versus repeated stateless uploads visible in the CUDA API timeline.
 
----
-
-## M5 — Batched Queries and Streams
+## M6 — Batched Queries and Streams
 
 Extend:
 

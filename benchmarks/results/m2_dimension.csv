@@ -1,0 +1,4 @@
+N,D,Q,K,seed,warmup_iterations,measured_iterations,cpu_e2e_ms,cuda_kernel_ms,cuda_e2e_ms,speedup_cpu_over_cuda,cpu_checksum,cuda_checksum,checksum_abs_difference,cpu_min_ms,cpu_max_ms,cuda_kernel_min_ms,cuda_kernel_max_ms,cuda_e2e_min_ms,cuda_e2e_max_ms,cpu_logical_processors,gpu,cuda_toolkit,compiler
+100000,128,4,10,42,2,5,21.952,3.189,13.784,1.59257109692397,5014392.114,5014392.158,0.04399999976158142,19.827,24.643,3.173,3.206,13.525,14.129,20,NVIDIA GeForce RTX 3050 Ti Laptop GPU,12.9,GCC 11.4.0
+100000,256,4,10,42,2,5,41.09,18.842,36.366,1.1299015563988342,3415550.648,3415550.707,0.05899999989196658,40.158,41.9,18.62,18.989,35.609,36.971,20,NVIDIA GeForce RTX 3050 Ti Laptop GPU,12.9,GCC 11.4.0
+100000,768,4,10,42,2,5,141.561,64.3,107.664,1.3148406152474366,2049631.471,2049631.459,0.011999999871477485,134.717,145.56,63.841,64.605,105.88,112.604,20,NVIDIA GeForce RTX 3050 Ti Laptop GPU,12.9,GCC 11.4.0
