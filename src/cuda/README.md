@@ -1,37 +1,52 @@
-# CUDA backends
+# CUDA Backends
 
-Milestone M1 provides naive_search.cu, selected through the backend name
-cuda-naive. It deliberately uses one CUDA thread per complete
-query/database-vector dot product and leaves Top-K selection on the CPU.
+The repository preserves each measured CUDA design as a separate backend so
+the optimization progression remains inspectable and reproducible. All
+backends compute exact FP32 dot products and return results through the shared
+deterministic CPU Top-K implementation.
 
-Milestone M3 provides block_search.cu, selected through the backend name
-cuda-block. It maps one 256-thread CUDA block to one query/database-vector
-pair, distributes dimensions across threads, and explicitly reduces partial
-dot products through shared memory. It preserves the same host pipeline and
-CPU Top-K as cuda-naive.
+| Backend | Source | Work mapping | Reduction |
+|---|---|---|---|
+| `cuda-naive` | `naive_search.cu` | One thread per vector pair | Serial in one thread |
+| `cuda-block` | `block_search.cu` | One 256-thread block per pair | Shared memory + block barriers |
+| `cuda-warp` | `warp_search.cu` | One 32-lane warp per pair; eight pairs per block | `__shfl_down_sync` |
+| `cuda-warp-resident` | `resident_search.cu` | Same warp kernel as `cuda-warp` | Same warp reduction |
 
-Milestone M4 provides warp_search.cu, selected through the backend name
-cuda-warp. It keeps a 256-thread block but maps each of its eight warps to
-one query/database-vector pair. Each warp distributes adjacent dimensions
-across its 32 lanes and reduces the partial dot product with synchronized
-shuffle operations, without explicit shared-memory reduction state or
-__syncthreads(). It preserves the same host pipeline and CPU Top-K.
+## Stateless Backends
 
-Later CUDA implementations must remain separate backends so the M1 kernel can
-continue to serve as a correctness and performance baseline.
+`cuda-naive`, `cuda-block`, and `cuda-warp` use the same host pipeline:
 
+```text
+allocate device buffers
+  -> upload database and queries
+  -> execute the selected kernel
+  -> download the complete score matrix
+  -> run CPU Top-K
+  -> release device buffers
+```
 
-Milestone M5 adds resident_search.cu, selected as cuda-warp-resident. It
-implements an explicit ResidentSearchBackend lifecycle:
+Keeping this pipeline constant isolates the effect of the M1, M3, and M4
+kernel mappings. Every CUDA API operation and kernel launch is checked.
 
-~~~text
-prepare_database -> search many query batches -> reload_database/clear_database
-~~~
+## Resident Backend
 
-The database device allocation and one synchronous H2D upload persist across
-search calls. Query and score buffers, score D2H, CPU Top-K, and the exact M4
-warp-per-vector kernel remain per-search behavior. cuda-warp is not changed;
-it remains the stateless comparison backend.
+M5 adds an explicit `ResidentSearchBackend` lifecycle:
 
-The resident implementation reports database preparation separately from warm
-query stages and keeps CUDA resources under RAII with checked CUDA operations.
+```text
+prepare_database()
+  -> search_prepared() repeatedly
+  -> reload_database() or clear_database()
+```
+
+Preparation owns the database device allocation and one synchronous H2D
+upload. Each prepared search still uploads queries, launches the exact M4 warp
+kernel, downloads scores, and runs CPU Top-K. Query and score buffers remain
+per-search allocations. Preparation timing is reported separately from warm
+query timing, and CUDA resources are held through RAII.
+
+Resident mode is a data-lifecycle change, not a new kernel. It is intended for
+repeated query batches and is not claimed to improve one-shot cold latency.
+
+See [`docs/architecture.md`](../../docs/architecture.md) for component and
+lifecycle details and [`docs/performance_report.md`](../../docs/performance_report.md)
+for the measured progression.

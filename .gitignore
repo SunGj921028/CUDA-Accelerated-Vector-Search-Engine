@@ -1,14 +1,46 @@
 /build/
 /build-*/
+/cmake-build-*/
+/CMakeFiles/
+/CMakeCache.txt
+/cmake_install.cmake
+/CTestTestfile.cmake
+/Makefile
+/Testing/
+/compile_commands.json
+/CMakeUserPresets.json
+/libvector_search_core.a
+/vector_search
+/vector_search_tests
+/vector_search_cuda_tests
 
-# Nsight reports are large binary artifacts; M2 scripts default to /tmp.
+# Nsight reports and databases are generated artifacts. Keep the exported
+# CSV/text summaries in version control instead.
 /profiling-results/
 *.nsys-rep
 *.ncu-rep
+*.nsight-sys-rep
+*.nsight-cuprof-report
 *.qdrep
 *.sqlite
+*.sqlite-shm
+*.sqlite-wal
 
-# Local IDE and compiler artifacts
+# Python tooling
+*.py[cod]
+__pycache__/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local IDE, editor, and operating-system artifacts
+.idea/
+.vscode/
 *.user
 *.suo
-__pycache__/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+Desktop.ini

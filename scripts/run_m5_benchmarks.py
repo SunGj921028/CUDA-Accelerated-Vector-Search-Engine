@@ -535,7 +535,6 @@ def main() -> int:
 
     warm_rows: List[Dict[str, object]] = []
     amortization_rows: List[Dict[str, object]] = []
-    warm_outputs: Dict[str, Dict[str, Dict[str, str]]] = {}
     for workload in workloads:
         row, outputs = run_warm_workload(
             binary,
@@ -547,7 +546,6 @@ def main() -> int:
             arguments.iterations,
         )
         warm_rows.append(row)
-        warm_outputs[workload[0]] = outputs
         amortization_rows.extend(
             build_amortization_rows(
                 workload,
@@ -562,12 +560,7 @@ def main() -> int:
         )
 
     write_csv(output_dir / "m5_cold_start.csv", cold_rows)
-    write_csv(output_dir / "m5_warm.csv", warm_rows)
     write_csv(output_dir / "m5_amortization.csv", amortization_rows)
-    write_csv(
-        output_dir / "m5_dimension.csv",
-        [row for row in warm_rows if row["D"] in (128, 256, 768)],
-    )
     write_csv(output_dir / "m5_comparison.csv", warm_rows)
 
     print("M5 cold-start results")
@@ -605,7 +598,6 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except RuntimeError as error:
         raise SystemExit("error: {}".format(error))
-
 
 
 
