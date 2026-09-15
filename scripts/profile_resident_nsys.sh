@@ -7,8 +7,8 @@ if [[ $# -gt 2 ]]; then
 fi
 
 script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-binary="${1:-$script_directory/../build-m5-cuda-wsl/vector_search}"
-output_directory="${2:-$script_directory/../profiling/nsys/m5}"
+binary="${1:-$script_directory/../build-cuda/vector_search}"
+output_directory="${2:-$script_directory/../profiling/nsys/resident}"
 
 if ! command -v nsys >/dev/null 2>&1; then
     echo "nsys is not installed or is not on PATH; install NVIDIA Nsight Systems CLI." >&2
@@ -23,7 +23,12 @@ fi
 mkdir -p "$output_directory"
 
 for backend in cuda-warp cuda-warp-resident; do
-    report_base="$output_directory/m5_${backend}_n10000_d128_q2"
+    if [[ "$backend" == "cuda-warp" ]]; then
+        report_name="stateless_warp"
+    else
+        report_name="resident_warp"
+    fi
+    report_base="$output_directory/${report_name}_n10000_d128_q2"
     nsys profile \
         --trace=cuda \
         --sample=none \
@@ -52,7 +57,6 @@ for backend in cuda-warp cuda-warp-resident; do
     echo "Nsight Systems report: ${report_base}.nsys-rep"
     echo "Nsight Systems summary: ${report_base}_summary.txt"
 done
-
 
 
 

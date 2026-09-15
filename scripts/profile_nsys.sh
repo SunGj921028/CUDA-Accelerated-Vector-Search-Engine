@@ -12,7 +12,7 @@ if [[ $# -gt 2 ]]; then
 fi
 
 binary="${1:-build-cuda/vector_search}"
-output_directory="${2:-/tmp/vector-search-m2-nsys}"
+output_directory="${2:-/tmp/vector-search-nsys}"
 
 if [[ ! -x "$binary" ]]; then
     echo "CUDA benchmark executable is not executable: $binary" >&2
@@ -25,7 +25,7 @@ profile_workload() {
     local label="$1"
     local vectors="$2"
     local dimension="$3"
-    local report_base="$output_directory/m2_${label}"
+    local report_base="$output_directory/naive_${label}"
 
     nsys profile \
         --trace=cuda \

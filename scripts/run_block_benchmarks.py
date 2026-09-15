@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the side-by-side M3 CPU, cuda-naive, and cuda-block benchmarks."""
+"""Run the side-by-side CPU, cuda-naive, and cuda-block benchmarks."""
 
 from __future__ import annotations
 
@@ -265,10 +265,10 @@ def main() -> int:
     ]
 
     output_dir = resolve_path(arguments.output_dir)
-    write_csv(output_dir / "m3_primary.csv", primary)
-    write_csv(output_dir / "m3_dimension.csv", dimensions)
-    write_csv(output_dir / "m3_small_workload.csv", small)
-    write_csv(output_dir / "m3_comparison.csv", primary + dimensions + small)
+    write_csv(output_dir / "block_primary.csv", primary)
+    write_csv(output_dir / "block_dimension.csv", dimensions)
+    write_csv(output_dir / "block_small_workload.csv", small)
+    write_csv(output_dir / "block_comparison.csv", primary + dimensions + small)
 
     print_summary(primary + dimensions + small)
     return 0

@@ -8,10 +8,10 @@ and are ignored by Git.
 
 - `ncu/*_details.csv`: Nsight Compute section/metric exports for the naive
   kernel.
-- `ncu/m3/*.csv`: the M3 naive/block comparison, including direct sector and
+- `ncu/block/*.csv`: the naive/block comparison, including direct sector and
   stall counters.
-- `ncu/m4/*.csv`: the M4 block/warp profiles at `D=128` and `D=768`.
-- `nsys/m5/*_summary.txt`: Nsight Systems CUDA API summaries showing the
+- `ncu/warp/*.csv`: the block/warp profiles at `D=128` and `D=768`.
+- `nsys/resident/*_summary.txt`: Nsight Systems CUDA API summaries showing the
   stateless and resident lifecycle call counts.
 
 These files are the source for the concise profiler tables in
@@ -44,8 +44,8 @@ bash scripts/profile_ncu.sh \
     build-cuda/vector_search /tmp/vector-search-ncu 100000 768 cuda-naive
 
 # Nsight Systems: stateless versus resident database lifecycle
-bash scripts/profile_m5_nsys.sh \
-    build-cuda/vector_search /tmp/vector-search-m5-nsys
+bash scripts/profile_resident_nsys.sh \
+    build-cuda/vector_search /tmp/vector-search-resident-nsys
 ```
 
 Under WSL2, Nsight Compute performance counters may require enabling GPU

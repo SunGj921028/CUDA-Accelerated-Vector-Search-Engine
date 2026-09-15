@@ -2,7 +2,7 @@
 
 ## How to read this log
 
-This file preserves the engineering decisions behind M0–M5. Each experiment
+This file preserves the engineering decisions behind the implementation stages. Each experiment
 records its baseline, evidence, hypothesis, implementation, measurement,
 interpretation, and decision. Earlier backends remain in the repository, so a
 later result does not erase the comparison point that motivated it.
@@ -19,11 +19,12 @@ GCC 11.4.0, CMake 3.22.1, Nsight Systems 2025.1.3, and Nsight Compute
 2025.2.1.
 
 Results from separate process runs show normal variation. In particular, the
-M4 primary and dimension-sweep D=768 rows are distinct measurements, and M5
-observed much slower host-to-device transfer than M2/M4. Raw values are
-retained rather than adjusted to make tables agree.
+warp primary and dimension-sweep D=768 rows are distinct measurements, and the
+resident run observed much slower host-to-device transfer than the baseline
+and warp runs. Raw values are retained rather than adjusted to make tables
+agree.
 
-## M0 — CPU correctness reference
+## CPU correctness reference
 
 ### Baseline
 
@@ -43,13 +44,13 @@ system.
 
 ### Implementation
 
-M0 added deterministic synthetic FP32 data, row normalization, serial dot
+The CPU reference added deterministic synthetic FP32 data, row normalization, serial dot
 products, deterministic CPU Top-K (score descending, index ascending), the
 `SearchBackend` interface, CLI, benchmark harness, and CPU tests.
 
 ### Measurement
 
-The historical M1 validation run measured the same CPU implementation:
+An earlier validation run measured the same CPU implementation:
 
 | Workload | CPU E2E |
 | --- | ---: |
@@ -67,11 +68,11 @@ CPU backend is optimized.
 Keep the CPU path unchanged as the correctness oracle. Every CUDA backend must
 match indices and scores within a documented FP32 tolerance.
 
-## M1 — Naive CUDA baseline
+## Naive CUDA baseline
 
 ### Baseline
 
-The M0 CPU backend computed every query/vector dot product serially.
+The CPU reference computed every query/vector dot product serially.
 
 ### Evidence / observation
 
@@ -94,7 +95,7 @@ checked.
 
 ### Measurement
 
-Historical M1 averages:
+Baseline averages:
 
 | Workload | CPU E2E | Naive kernel | Naive E2E | CPU / CUDA E2E |
 | --- | ---: | ---: | ---: | ---: |
@@ -110,14 +111,14 @@ stage or profiler evidence existed.
 
 ### Decision
 
-Freeze `cuda-naive` as the M1 algorithmic baseline. Investigate before
+Freeze `cuda-naive` as the algorithmic baseline. Investigate before
 changing the kernel.
 
-## M2 — Latency decomposition
+## Latency decomposition
 
 ### Baseline
 
-The unchanged M1 pipeline reported one host E2E number and one CUDA Event
+The unchanged naive pipeline reported one host E2E number and one CUDA Event
 kernel number.
 
 ### Evidence / observation
@@ -133,14 +134,14 @@ identify the largest measured opportunities without altering the baseline.
 
 ### Implementation
 
-M2 added opt-in `--timing-breakdown`. CUDA Events measure synchronous H2D,
+The timing pass added opt-in `--timing-breakdown`. CUDA Events measure synchronous H2D,
 kernel, and D2H operations; host `steady_clock` measures allocations, CPU
 Top-K, cleanup, and E2E. The kernel, mapping, block size, score transfer, and
 Top-K algorithm were unchanged.
 
 ### Measurement
 
-From [`m2_stage_timing.csv`](../benchmarks/results/m2_stage_timing.csv):
+From [`stage_timing.csv`](../benchmarks/results/stage_timing.csv):
 
 | Workload | Allocation | DB H2D | Kernel | Score D2H | CPU Top-K | Cleanup | Total E2E |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -171,7 +172,7 @@ so GPU Top-K was not the highest-evidence first target.
 Profile the high-D similarity kernel to determine why it was slow. Retain
 database residency as a later, separate system-level opportunity.
 
-## M2.5 — Nsight Compute diagnosis
+## Nsight Compute diagnosis
 
 ### Baseline
 
@@ -212,7 +213,7 @@ dominated.
 
 ### Implementation
 
-None. M2.5 was analysis-only. It generated compact Nsight Compute CSV exports
+None. This was analysis-only. It generated compact Nsight Compute CSV exports
 and selected the next controlled experiment.
 
 ### Measurement
@@ -233,11 +234,11 @@ the more accurate description.
 Implement one separate block-per-vector experiment. Preserve the naive backend
 and all host-pipeline behavior.
 
-## M3 — Block-per-vector reduction
+## Block-per-vector reduction
 
 ### Baseline
 
-The primary M2/M2.5 target was a roughly 64 ms D=768 naive kernel with 4/32
+The primary timing/profile target was a roughly 64 ms D=768 naive kernel with 4/32
 useful load bytes, almost no eligible warps, and heavy memory stalls.
 
 ### Profiler evidence
@@ -255,14 +256,14 @@ too expensive for small D.
 
 ### Implementation
 
-M3 added `cuda-block` as a new backend. It kept per-search allocations,
+The block experiment added `cuda-block` as a new backend. It kept per-search allocations,
 synchronous copies, full score D2H, CPU Top-K, timing boundaries, FP32 data,
 and the fixed 256-thread block. It added a 256-float shared reduction array
 and block-wide barriers.
 
 ### Measurement
 
-From the M3 controlled runs:
+From the controlled block runs:
 
 | Workload | Naive kernel | Block kernel | Kernel speedup | Naive E2E | Block E2E |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -302,11 +303,11 @@ load target.
 Keep `cuda-block` as a successful high-D experimental backend. Test a
 warp-sized reduction to retain coalescing while reducing low-D overhead.
 
-## M4 — Warp-per-vector reduction
+## Warp-per-vector reduction
 
 ### Baseline
 
-M3 achieved 32/32 load-sector use and about an 8x D=768 kernel improvement,
+The block design achieved 32/32 load-sector use and about an 8x D=768 kernel improvement,
 but regressed at D=128 because of the fixed full-block reduction.
 
 ### Profiler evidence
@@ -324,7 +325,7 @@ smaller dimensions, without assuming a win at every D.
 
 ### Implementation
 
-M4 added `cuda-warp`. A 256-thread block contains eight independent pair
+The warp experiment added `cuda-warp`. A 256-thread block contains eight independent pair
 warps. Each lane walks `l, l+32, ...`, `__shfl_down_sync` reduces at
 offsets 16/8/4/2/1, and lane 0 writes the score. A ballot-derived mask handles
 tail warps. The host pipeline stayed frozen.
@@ -363,7 +364,7 @@ the dimension sweep, while warp won 50.381 versus 51.515 ms in the separate
 primary run. The approximately 1.5% reversal is normal run-to-run variance,
 not a contradiction or a reason to rewrite raw data.
 
-Naive remained the fastest kernel at D=32. M4 therefore demonstrates a useful
+Naive remained the fastest kernel at D=32. The warp design therefore demonstrates a useful
 mapping, not an automatic selection rule.
 
 ### Decision
@@ -373,18 +374,18 @@ warp-versus-naive kernel result as the headline. Defer warps-per-block tuning;
 the already measured request-level database H2D cost motivates a distinct
 system experiment.
 
-## M5 — GPU-resident database
+## GPU-resident database
 
 ### Baseline
 
-The M4 primary kernel was about 6.9 ms but stateless E2E was about 50 ms.
-Earlier M2 decomposition measured database H2D at 31.888 ms for 100K x 768.
+The warp primary kernel was about 6.9 ms but stateless E2E was about 50 ms.
+Earlier stage timing measured database H2D at 31.888 ms for 100K x 768.
 Every stateless search allocated and uploaded the same database again.
 
 ### Profiler evidence
 
 The stateless pipeline's allocation/copy/free sequence was visible in Nsight
-Systems API traces. M2 timing had already established database H2D as the
+Systems API traces. Stage timing had already established database H2D as the
 largest non-kernel stage at high D.
 
 ### Hypothesis
@@ -395,9 +396,9 @@ request should not improve because preparation must still be paid.
 
 ### Implementation
 
-M5 added `ResidentSearchBackend` and `cuda-warp-resident` with explicit
+The resident experiment added `ResidentSearchBackend` and `cuda-warp-resident` with explicit
 `prepare_database`, `reload_database`, `search`, and `clear_database`
-states. The M4 warp mapping is unchanged. Database allocation/H2D becomes
+states. The warp mapping is unchanged. Database allocation/H2D becomes
 preparation work; query/score allocation, query H2D, kernel, score D2H, CPU
 Top-K, and query cleanup remain per search.
 
@@ -434,7 +435,8 @@ Primary per-batch stage means:
 | CPU Top-K | 2.415 | 2.452 ms |
 | Stage E2E | 395.502 | 13.287 ms |
 
-The M5 stateless transfer timing was much slower than the earlier M2/M4 runs.
+The resident stateless transfer timing was much slower than the earlier
+baseline/warp runs.
 The paired result is retained as environment-sensitive evidence; it is not
 used as the project's headline.
 
@@ -465,17 +467,17 @@ database. Report cold, warm, and amortized timing separately. Do not present
 the environment-sensitive roughly 30x warm ratio as a universal or one-shot
 speedup.
 
-## M5.5 — Project finalization
+## Documentation and reproducibility
 
 ### Baseline
 
-M0–M5 were implemented and measured, but the top-level narrative, artifact
-organization, and reproduction path were spread across milestone-era files.
+The implementation stages were measured, but the top-level narrative, artifact
+organization, and reproduction path were spread across separately named files.
 
 ### Evidence / observation
 
 The final architecture document still contained future plans and obsolete
-paths; M5 emitted two byte-for-byte duplicate CSVs; large local profiler
+paths; the resident benchmark had two byte-for-byte duplicate CSVs; large local profiler
 binaries needed an explicit policy; and the repository had no final
 source-backed performance figures or interview notes.
 
@@ -486,15 +488,15 @@ the work reviewable and reproducible without changing performance behavior.
 
 ### Implementation
 
-M5.5 rewrote the README and final architecture, reconciled this log and the
+The documentation pass rewrote the README and architecture, reconciled this log and the
 performance report, added benchmark/profiling catalogs, removed only the two
-duplicate M5 CSV copies, added a reproducible matplotlib figure script and two
+duplicate resident CSV copies, added a reproducible matplotlib figure script and two
 figures, expanded ignore rules, and added resume/interview notes.
 
 ### Measurement
 
 No new performance benchmark was introduced. The figures read the existing
-M4 dimension CSV; all numeric claims trace to retained raw benchmark or
+warp dimension CSV; all numeric claims trace to retained raw benchmark or
 profiler exports.
 
 ### Interpretation
@@ -504,4 +506,4 @@ reproducibility but is not a new optimization result.
 
 ### Decision
 
-Stop at M5.5. All later ideas remain explicitly labeled future work.
+All later ideas remain explicitly labeled future work.

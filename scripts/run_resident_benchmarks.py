@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the controlled M5 stateless-versus-GPU-resident benchmark."""
+"""Run the controlled stateless-versus-GPU-resident benchmark."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ def resolve_path(path: Path) -> Path:
 
 
 def default_binary() -> Path:
-    return REPOSITORY_ROOT / "build-m5-cuda-wsl" / "vector_search"
+    return REPOSITORY_ROOT / "build-cuda" / "vector_search"
 
 
 def parse_key_value_output(output: str) -> Dict[str, str]:
@@ -559,11 +559,11 @@ def main() -> int:
             )
         )
 
-    write_csv(output_dir / "m5_cold_start.csv", cold_rows)
-    write_csv(output_dir / "m5_amortization.csv", amortization_rows)
-    write_csv(output_dir / "m5_comparison.csv", warm_rows)
+    write_csv(output_dir / "resident_cold_start.csv", cold_rows)
+    write_csv(output_dir / "resident_amortization.csv", amortization_rows)
+    write_csv(output_dir / "resident_comparison.csv", warm_rows)
 
-    print("M5 cold-start results")
+    print("Resident cold-start results")
     print("workload,cuda_warp_e2e_ms,resident_db_allocation_ms,resident_db_h2d_ms,resident_prepare_ms,resident_first_query_ms,resident_cold_total_ms")
     for row in cold_rows:
         print(
@@ -578,7 +578,7 @@ def main() -> int:
             )
         )
 
-    print("M5 steady-state results")
+    print("Resident steady-state results")
     print("workload,stateless_mean_ms,resident_mean_ms,warm_speedup")
     for row in warm_rows:
         print(
@@ -598,6 +598,5 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except RuntimeError as error:
         raise SystemExit("error: {}".format(error))
-
 
 

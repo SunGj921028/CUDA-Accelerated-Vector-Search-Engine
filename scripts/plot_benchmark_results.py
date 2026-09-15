@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render final kernel-latency and speedup figures from M4 CSV evidence."""
+"""Render kernel-latency and speedup figures from warp benchmark evidence."""
 
 from __future__ import annotations
 
@@ -29,8 +29,8 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--input",
         type=Path,
-        default=REPOSITORY_ROOT / "benchmarks/results/m4_dimension.csv",
-        help="M4 dimension-sweep CSV",
+        default=REPOSITORY_ROOT / "benchmarks/results/warp_dimension.csv",
+        help="Warp dimension-sweep CSV",
     )
     parser.add_argument(
         "--output-dir",
@@ -69,7 +69,7 @@ def read_rows(path: Path) -> List[Dict[str, str]]:
             int(row["seed"]),
         )
         if metadata != (100_000, 4, 10, 42):
-            raise RuntimeError("unexpected workload metadata in M4 dimension CSV")
+            raise RuntimeError("unexpected workload metadata in warp dimension CSV")
         for field, _, _, _ in BACKENDS:
             value = float(row[field])
             if not math.isfinite(value) or value <= 0.0:
@@ -103,7 +103,7 @@ def add_source_note(figure: plt.Figure) -> None:
     figure.text(
         0.5,
         0.015,
-        "Source: benchmarks/results/m4_dimension.csv | "
+        "Source: benchmarks/results/warp_dimension.csv | "
         "N=100,000, Q=4, K=10, seed=42; "
         "2 warm-ups, mean of 5 measured iterations",
         ha="center",

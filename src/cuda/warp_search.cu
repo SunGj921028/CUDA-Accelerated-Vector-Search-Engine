@@ -17,7 +17,8 @@
 namespace vector_search {
 namespace {
 
-// M4 keeps the first experiment fixed at 256 threads, or eight CUDA warps,
+// The warp-per-vector experiment keeps the block fixed at 256 threads, or
+// eight CUDA warps,
 // so the controlled variable is the per-warp mapping and reduction scope.
 constexpr unsigned int kThreadsPerBlock = 256;
 constexpr unsigned int kWarpSize = 32;
@@ -177,8 +178,9 @@ float measure_synchronous_cuda_copy(
     return milliseconds;
 }
 
-// M4 maps one warp to one query/database-vector pair. Lanes walk adjacent
-// dimensions, preserving M3's coalesced row-major loads, then reduce only
+// The warp-per-vector design maps one warp to one query/database-vector pair.
+// Lanes walk adjacent dimensions, preserving the block design's coalesced
+// row-major loads, then reduce only
 // within that warp using a synchronized shuffle mask.
 __global__ void warp_similarity_kernel(
     const float* database,

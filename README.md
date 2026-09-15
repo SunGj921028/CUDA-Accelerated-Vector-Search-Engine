@@ -8,7 +8,7 @@ similarities for normalized vectors, uses a deterministic serial CPU backend as
 the correctness reference, and preserves each CUDA design as a separate
 backend so the optimization path remains reproducible.
 
-The project progresses from a deliberately naive CUDA mapping to coalesced
+The project develops from a deliberately naive CUDA mapping to coalesced
 block- and warp-level reductions, then addresses the next system bottleneck by
 keeping an unchanged database resident on the GPU. CPU Top-K is intentionally
 shared by every backend so the kernel and data-lifecycle experiments stay
@@ -17,7 +17,7 @@ controlled.
 ## Key Results
 
 The headline result is a **9.316x kernel speedup** at
-`N=100,000, D=768, Q=4, K=10`: the M4 primary run reduced similarity-kernel
+`N=100,000, D=768, Q=4, K=10`: the warp primary run reduced similarity-kernel
 latency from **64.447 ms** to **6.918 ms**.
 
 | Backend | Work mapping | D=768 kernel latency | Speedup vs naive |
@@ -26,13 +26,13 @@ latency from **64.447 ms** to **6.918 ms**.
 | `cuda-naive` | One thread per vector pair | 64.447 ms | 1.000x |
 | `cuda-block` | One block per vector pair | 7.879 ms | 8.180x |
 | `cuda-warp` | One warp per vector pair | 6.918 ms | 9.316x |
-| `cuda-warp-resident` | Warp kernel + persistent GPU database | Same M4 kernel design | See M5 caveat below |
+| `cuda-warp-resident` | Warp kernel + persistent GPU database | Same warp kernel design | See resident-mode caveat below |
 
-These kernel values come from the single M4 primary comparison in
-[`m4_primary.csv`](benchmarks/results/m4_primary.csv): Release build, two
+These kernel values come from the single warp primary comparison in
+[`warp_primary.csv`](benchmarks/results/warp_primary.csv): Release build, two
 warm-ups, five measured iterations, normalized FP32 data, and seed 42.
-Dataset generation is excluded. M5 was a separate system-level run and is not
-mixed into this kernel-speedup calculation.
+Dataset generation is excluded. The resident experiment was a separate
+system-level run and is not mixed into this kernel-speedup calculation.
 
 ![Kernel latency for cuda-naive, cuda-block, and cuda-warp at D=128, D=256, and D=768](docs/images/kernel_latency_by_backend.png)
 
@@ -52,27 +52,27 @@ Warp per vector
 GPU-resident database
 ```
 
-### M0 — CPU reference
+### CPU reference
 
 The serial backend established deterministic dataset generation, FP32 dot
 products, stable Top-K ordering, and the correctness oracle used by every CUDA
 test. This made later performance changes measurable without relaxing result
 quality.
 
-### M1 — Naive CUDA
+### Naive CUDA baseline
 
 The first CUDA backend assigned one complete query/database-vector pair to one
 thread. It was correct and simple, but each thread walked all `D` dimensions
 serially and adjacent threads loaded different row-major vectors.
 
-### M2 — Stage timing
+### Pipeline timing
 
 The unchanged naive pipeline was decomposed into allocation, database/query
 H2D, kernel, score D2H, CPU Top-K, and cleanup. At `100K x 768`, the kernel
 was the largest measured stage at 64.144 ms (58.3% of instrumented E2E), while
 database H2D was 31.888 ms (29.0%).
 
-### M2.5 — Nsight Compute
+### Nsight Compute diagnosis
 
 Profiling confirmed the suspected memory-access problem: global loads used only
 4 of 32 bytes per sector, and the kernel spent most scheduler cycles with no
@@ -80,21 +80,21 @@ eligible warp while LG-memory queue and L1TEX scoreboard stalls dominated.
 This evidence selected a coalesced, dimension-parallel mapping as the next
 experiment.
 
-### M3 — Block per vector
+### Block per vector
 
 One 256-thread block was assigned to each pair. Threads loaded adjacent
 dimensions and reduced partial sums through shared memory. Global-load sector
 use improved to 32/32 bytes and the primary D=768 kernel fell to 7.879 ms, but
 the full-block reduction regressed at D=128.
 
-### M4 — Warp per vector
+### Warp per vector
 
 One warp was assigned to each pair, with lanes walking dimensions and
 `__shfl_down_sync` performing the reduction. It preserved 32/32-byte load
 use, removed the block-wide shared-memory/barrier reduction, recovered small-D
 performance, and reached 6.918 ms on the primary D=768 run.
 
-### M5 — GPU-resident database
+### GPU-resident database
 
 Once kernel execution was about 6.9 ms, repeatedly allocating and uploading
 the unchanged database became the system-level target. The resident backend
@@ -127,7 +127,7 @@ cuda-naive global load:  4 / 32 useful bytes per sector
 coalesced global load:  32 / 32 useful bytes per sector
 ```
 
-In the paired M3 profile, the naive kernel also showed 98.67% no-eligible-warp
+In the paired block profile, the naive kernel also showed 98.67% no-eligible-warp
 cycles, 63.47% direct LG-throttle stall share, and 860.95 warp cycles per
 issued instruction. High theoretical occupancy did not solve the access
 pattern: resident warps were present, but usually unable to issue while memory
@@ -143,7 +143,7 @@ one CUDA thread -> one (query, database-vector) pair
                     -> one score
 ```
 
-This is the frozen M1 baseline: 256 threads per block, full score D2H, and CPU
+This is the frozen naive baseline: 256 threads per block, full score D2H, and CPU
 Top-K.
 
 ### `cuda-block`
@@ -185,14 +185,14 @@ prepare_database
     -> reload_database or clear_database
 ```
 
-The similarity kernel is the M4 warp design. Query and score buffers, query
+The similarity kernel is the warp design. Query and score buffers, query
 H2D, score D2H, CPU Top-K, and their cleanup remain per search; only database
 allocation/upload lifetime changes.
 
 ## Benchmark Results
 
-The following values are from the single M4 dimension sweep
-[`m4_dimension.csv`](benchmarks/results/m4_dimension.csv), not the separate
+The following values are from the single warp dimension sweep
+[`warp_dimension.csv`](benchmarks/results/warp_dimension.csv), not the separate
 primary run used for the 9.316x headline.
 
 | D | `cuda-naive` kernel | `cuda-block` kernel | `cuda-warp` kernel | Warp vs naive |
@@ -248,19 +248,19 @@ allocate -> database H2D -> query H2D -> kernel
 ```
 
 The resident pipeline moves database allocation/H2D to explicit preparation.
-The M5 paired repeated-batch run recorded:
+The resident paired repeated-batch run recorded:
 
-| Primary M5 metric, N=100K and D=768 | Stateless `cuda-warp` | Resident |
+| Primary resident metric, N=100K and D=768 | Stateless `cuda-warp` | Resident |
 | --- | ---: | ---: |
 | Database H2D per warm search | 369.096 ms | 0 ms |
 | Kernel mean | 7.459 ms | 7.038 ms |
 | Warm query E2E mean | 395.504 ms | 13.289 ms |
 | Same-run warm speedup | 1.000x | 29.761x |
 
-That large warm ratio is environment-sensitive: the M5 stateless H2D timing
-was much higher than the earlier M2/M4 runs. It is valid as a paired M5
-observation, not as a universal headline or a cross-run replacement for the
-stable 9.316x kernel result.
+That large warm ratio is environment-sensitive: the stateless H2D timing in
+the resident run was much higher than the earlier baseline/warp runs. It is
+valid as a paired resident-mode observation, not as a universal headline or a
+cross-run replacement for the stable 9.316x kernel result.
 
 The dedicated one-shot run was unambiguous: stateless `cuda-warp` took
 526.642 ms, while resident preparation plus its first query took 676.639 ms
@@ -375,13 +375,13 @@ Timing definitions:
   preparation is reported separately and included only in cold/amortized
   calculations.
 
-Reproduce the milestone result sets:
+Reproduce the benchmark result sets:
 
 ```bash
-python3 scripts/run_m2_benchmarks.py --binary build-cuda/vector_search
-python3 scripts/run_m3_benchmarks.py --binary build-cuda/vector_search
-python3 scripts/run_m4_benchmarks.py --binary build-cuda/vector_search
-python3 scripts/run_m5_benchmarks.py \
+python3 scripts/run_baseline_benchmarks.py --binary build-cuda/vector_search
+python3 scripts/run_block_benchmarks.py --binary build-cuda/vector_search
+python3 scripts/run_warp_benchmarks.py --binary build-cuda/vector_search
+python3 scripts/run_resident_benchmarks.py \
     --binary build-cuda/vector_search --warmup 2 --iterations 100 --include-250k
 ```
 
@@ -389,14 +389,14 @@ The runners overwrite their named CSV outputs. Use a separate output directory
 when preserving the committed evidence:
 
 ```bash
-python3 scripts/run_m4_benchmarks.py \
-    --binary build-cuda/vector_search --output-dir /tmp/vector-search-m4
+python3 scripts/run_warp_benchmarks.py \
+    --binary build-cuda/vector_search --output-dir /tmp/vector-search-warp
 ```
 
 Regenerate the documentation plots without rerunning benchmarks:
 
 ```bash
-python3 scripts/plot_final_results.py
+python3 scripts/plot_benchmark_results.py
 ```
 
 See [`benchmarks/results/README.md`](benchmarks/results/README.md) for the
@@ -427,11 +427,11 @@ bash scripts/profile_ncu.sh \
     100000 768 cuda-warp
 ```
 
-Profile the M5 stateless/resident lifecycle:
+Profile the stateless/resident database lifecycle:
 
 ```bash
-bash scripts/profile_m5_nsys.sh \
-    build-cuda/vector_search /tmp/vector-search-m5-nsys
+bash scripts/profile_resident_nsys.sh \
+    build-cuda/vector_search /tmp/vector-search-resident-nsys
 ```
 
 Binary `.ncu-rep`, `.nsys-rep`, and profiler `.sqlite` files are ignored;
@@ -463,8 +463,8 @@ configuration, builds, or tests and is unrelated to CUDA.
 
 - [`docs/architecture.md`](docs/architecture.md): final component, lifecycle,
   data-flow, and timing architecture.
-- [`docs/performance_report.md`](docs/performance_report.md): chronological
-  M0–M5 measurements and conclusions.
+- [`docs/performance_report.md`](docs/performance_report.md): measurements and
+  conclusions for each named implementation stage.
 - [`docs/optimization_log.md`](docs/optimization_log.md): experiment
   baselines, evidence, hypotheses, changes, results, and decisions.
 - [`docs/resume_and_interview_notes.md`](docs/resume_and_interview_notes.md):
@@ -481,15 +481,3 @@ profiling, memory-access analysis, and controlled GPU performance experiments.
 It is not a production approximate-nearest-neighbor library, a FAISS
 replacement, a distributed vector database, a RAG application, a web service,
 or a multi-GPU system.
-
-## Final Project Status
-
-**Core project: complete.**
-
-M5.5 finalizes the implemented M0–M5 work. It does not implement M6 or add a
-new algorithm, kernel, backend, or runtime optimization.
-
-Potential future experiments, each requiring its own baseline and measurement,
-include warps-per-block tuning, GPU Top-K, asynchronous batching, pinned
-memory, FP16/Tensor Cores, and approximate-nearest-neighbor search. They are
-future work, not current capabilities.

@@ -17,7 +17,7 @@
 namespace vector_search {
 namespace {
 
-// M5 deliberately uses the exact M4 warp mapping and launch configuration.
+// Resident mode deliberately uses the exact warp mapping and launch configuration.
 // The controlled change is only the lifetime of the database allocation.
 constexpr unsigned int kThreadsPerBlock = 256;
 constexpr unsigned int kWarpSize = 32;
@@ -200,7 +200,7 @@ float measure_synchronous_cuda_copy(
     return milliseconds;
 }
 
-// This is the M4 warp-per-vector kernel verbatim: 256 threads per block,
+// This is the same warp-per-vector kernel: 256 threads per block,
 // eight warps per block, lane-strided dimensions, and shuffle-down reduction.
 __global__ void warp_similarity_kernel(
     const float* database,

@@ -1,4 +1,4 @@
-# Performance Report — M0 through M5
+# Performance Report
 
 This report records the measured optimization path of the exact FP32 vector-search engine. It separates kernel-only latency from end-to-end latency and treats the CPU implementation as the correctness reference. Raw measurements are retained under [`benchmarks/results/`](../benchmarks/results/README.md), while the experiment-by-experiment reasoning is preserved in [`optimization_log.md`](optimization_log.md).
 
@@ -16,7 +16,7 @@ For the primary `N=100,000`, `D=768`, `Q=4`, `K=10` workload:
 | `cuda-block` | 7.879 | 8.180x |
 | `cuda-warp` | 6.918 | **9.316x** |
 
-After kernel latency fell, repeated database host-to-device transfer became a system-level bottleneck. M5 therefore added a GPU-resident database lifecycle. It did not change the warp kernel and did not improve one-shot cold latency; its benefit is the removal of repeated database uploads across query batches.
+After kernel latency fell, repeated database host-to-device transfer became a system-level bottleneck. The resident backend therefore added a GPU-resident database lifecycle. It did not change the warp kernel and did not improve one-shot cold latency; its benefit is the removal of repeated database uploads across query batches.
 
 ## Tested Environment
 
@@ -32,7 +32,7 @@ After kernel latency fell, repeated database host-to-device transfer became a sy
 | Nsight Systems | 2025.1.3.140 |
 | Nsight Compute | 2025.2.1.0 |
 
-Measurements in different milestone CSVs were collected in separate runs. Small differences for nominally identical workloads are expected from normal run-to-run variance. Tables do not silently substitute values from one run into another.
+Measurements in different benchmark CSVs were collected in separate runs. Small differences for nominally identical workloads are expected from normal run-to-run variance. Tables do not silently substitute values from one run into another.
 
 ## Measurement Definitions
 
@@ -42,7 +42,7 @@ Measurements in different milestone CSVs were collected in separate runs. Small 
 - **Resident warm-query latency** measures a search after preparation, so it excludes the database upload by design.
 - All benchmark runners use warm-up iterations followed by multiple measured iterations unless a cold-start experiment explicitly states otherwise.
 
-## M0 — CPU Reference
+## CPU Reference
 
 ### Observation
 
@@ -54,7 +54,7 @@ A simple serial C++ implementation would provide the clearest correctness oracle
 
 ### Change
 
-M0 implemented exact FP32 dot-product scoring followed by deterministic CPU Top-K ordering.
+The CPU reference implements exact FP32 dot-product scoring followed by deterministic CPU Top-K ordering.
 
 ### Measurement
 
@@ -64,7 +64,7 @@ The CPU backend is included in the scaling and correctness datasets, but its pri
 
 Every CUDA backend must match the CPU scores and indices within the configured floating-point tolerance. CPU Top-K remains intentionally shared so kernel work can be compared without changing ranking semantics.
 
-## M1 — Naive CUDA Baseline
+## Naive CUDA Baseline
 
 ### Observation
 
@@ -76,17 +76,17 @@ Parallelizing the N × Q pair space would establish a functional CUDA baseline a
 
 ### Change
 
-M1 added `cuda-naive`, including device allocation, database/query upload, kernel execution, score download, CPU Top-K, and cleanup.
+The first CUDA backend added `cuda-naive`, including device allocation, database/query upload, kernel execution, score download, CPU Top-K, and cleanup.
 
 ### Measurement
 
-For the later primary M4 comparison at `N=100,000`, `D=768`, `Q=4`, `K=10`, the naive kernel measured 64.447 ms.
+For the later primary warp comparison at `N=100,000`, `D=768`, `Q=4`, `K=10`, the naive kernel measured 64.447 ms.
 
 ### Conclusion
 
 The implementation was correct, but the mapping left dimension-level parallelism unused and produced an unfavorable row-major memory-access pattern within each warp.
 
-## M2 — Stage Timing and Bottleneck Analysis
+## Stage Timing and Bottleneck Analysis
 
 ### Observation
 
@@ -98,7 +98,7 @@ Explicit stage timing would identify the dominant work and prevent optimization 
 
 ### Change
 
-M2 instrumented allocation, database H2D, query H2D, kernel, score D2H, CPU Top-K, cleanup, and total end-to-end latency.
+The timing pass instrumented allocation, database H2D, query H2D, kernel, score D2H, CPU Top-K, cleanup, and total end-to-end latency.
 
 ### Measurement
 
@@ -121,7 +121,7 @@ The individually timed stages do not sum exactly to end-to-end time because the 
 
 Kernel execution was the largest measured component, with database upload second. The evidence justified profiling and redesigning the kernel before pursuing Top-K or transfer optimizations.
 
-## M2.5 — Nsight Compute Profiling
+## Nsight Compute Profiling
 
 ### Observation
 
@@ -133,7 +133,7 @@ The one-thread-per-pair mapping caused uncoalesced row-major loads and memory-de
 
 ### Change
 
-M2.5 added reproducible Nsight Compute collection and retained concise metric summaries.
+Reproducible Nsight Compute collection was added and concise metric summaries were retained.
 
 ### Measurement
 
@@ -155,7 +155,7 @@ The stall summaries attributed approximately 60.46% of sampled stalls to the LG 
 
 High occupancy did not imply useful throughput. Warps were resident but usually ineligible because each lane followed a separate, poorly coalesced load stream. The profiler evidence supported changing the work mapping.
 
-## M3 — Block per Vector Pair
+## Block per Vector Pair
 
 ### Observation
 
@@ -167,7 +167,7 @@ Assigning one block to each vector pair and distributing dimensions across threa
 
 ### Change
 
-M3 introduced `cuda-block`: one 256-thread block per pair, lane-strided dimension work, and an explicit shared-memory reduction.
+The block design introduced `cuda-block`: one 256-thread block per pair, lane-strided dimension work, and an explicit shared-memory reduction.
 
 ### Measurement
 
@@ -182,13 +182,13 @@ The paired `D=768` Nsight Compute run showed:
 | Warp cycles per issued instruction | 860.95 | 19.02 |
 | Achieved occupancy | 95.46% | 93.93% |
 
-In the primary M4 benchmark, block kernel latency at `D=768` was 7.879 ms versus 64.447 ms for naive, an 8.180x speedup.
+In the primary warp benchmark, block kernel latency at `D=768` was 7.879 ms versus 64.447 ms for naive, an 8.180x speedup.
 
 ### Conclusion
 
 The access redesign corrected the sector-utilization problem and substantially reduced memory-dependency pressure. The full-block reduction was effective for high dimension, but its barrier and instruction overhead penalized smaller dimensions.
 
-## M4 — Warp per Vector Pair
+## Warp per Vector Pair
 
 ### Observation
 
@@ -200,11 +200,11 @@ A single warp could preserve coalesced dimension access while reducing synchroni
 
 ### Change
 
-M4 added `cuda-warp`: one warp per vector pair, lane-strided accumulation, and register-level `__shfl_down_sync` reduction. Eight independent pairs share each 256-thread block.
+The warp design added `cuda-warp`: one warp per vector pair, lane-strided accumulation, and register-level `__shfl_down_sync` reduction. Eight independent pairs share each 256-thread block.
 
 ### Measurement
 
-The M4 dimension sweep used `N=100,000`, `Q=4`, `K=10`, seed 42, two warm-ups, and five measured iterations:
+The warp dimension sweep used `N=100,000`, `Q=4`, `K=10`, seed 42, two warm-ups, and five measured iterations:
 
 | Dimension | `cuda-naive` (ms) | `cuda-block` (ms) | `cuda-warp` (ms) | Block speedup | Warp speedup |
 |---:|---:|---:|---:|---:|---:|
@@ -212,7 +212,7 @@ The M4 dimension sweep used `N=100,000`, `Q=4`, `K=10`, seed 42, two warm-ups, a
 | 256 | 19.149 | 5.559 | 2.351 | 3.445x | 8.145x |
 | 768 | 63.601 | 7.975 | 6.985 | 7.975x | 9.105x |
 
-The separate M4 primary run at `D=768` measured 64.447 ms for naive, 7.879 ms for block, and 6.918 ms for warp, yielding the headline **9.316x** warp-kernel speedup over naive.
+The separate warp primary run at `D=768` measured 64.447 ms for naive, 7.879 ms for block, and 6.918 ms for warp, yielding the headline **9.316x** warp-kernel speedup over naive.
 
 Nsight Compute explains the workload-dependent behavior:
 
@@ -229,13 +229,13 @@ At `D=128`, the block kernel's leading sampled stall was the CTA barrier at 6.6 
 
 ### Conclusion
 
-Warp-per-pair is the best tested general-purpose kernel in this repository. It retains the coalescing benefit of M3 and substantially lowers execution overhead, especially for smaller dimensions. Block-per-pair remains instructive and competitive at high dimension, so it is preserved as a separate backend.
+Warp-per-pair is the best tested general-purpose kernel in this repository. It retains the coalescing benefit of the block design and substantially lowers execution overhead, especially for smaller dimensions. Block-per-pair remains instructive and competitive at high dimension, so it is preserved as a separate backend.
 
-## M5 — GPU-Resident Database
+## GPU-Resident Database
 
 ### Observation
 
-After the warp kernel became much faster, the stateless backend still allocated and uploaded the full database for every search. M2 had already shown database H2D as the second-largest stage; later repeated-query measurements made that system cost more visible.
+After the warp kernel became much faster, the stateless backend still allocated and uploaded the full database for every search. Stage timing had already shown database H2D as the second-largest cost; later repeated-query measurements made that system cost more visible.
 
 ### Hypothesis
 
@@ -243,7 +243,7 @@ Keeping database vectors on the GPU across query batches would remove redundant 
 
 ### Change
 
-M5 added the `cuda-warp-resident` lifecycle:
+The resident backend added the `cuda-warp-resident` lifecycle:
 
 1. `prepare_database()` allocates and uploads the database once.
 2. Repeated `search_prepared()` calls upload only queries, launch the existing warp kernel, copy scores back, and run CPU Top-K.
@@ -266,7 +266,7 @@ Resident cold total was slower in this run. GPU residency is therefore not prese
 
 #### Repeated warm queries
 
-In the separate M5 primary repeated-query run:
+In the separate resident primary repeated-query run:
 
 | Stage | Stateless warp (ms) | Resident warm query (ms) |
 |---|---:|---:|
@@ -276,9 +276,9 @@ In the separate M5 primary repeated-query run:
 | CPU Top-K | 2.415 | 2.452 |
 | End-to-end | 395.502 | 13.287 |
 
-The measured warm-query ratio was approximately 29.76x. This is deliberately not the project's headline speedup: the stateless database upload in that run was much slower than the earlier M2 upload, so the ratio is environment-sensitive and applies only to repeated prepared searches.
+The measured warm-query ratio was approximately 29.76x. This is deliberately not the project's headline speedup: the stateless database upload in that run was much slower than the earlier baseline upload, so the ratio is environment-sensitive and applies only to repeated prepared searches.
 
-The M5 amortization sweep reported the following total-work ratios:
+The resident amortization sweep reported the following total-work ratios:
 
 | Query batches after one preparation | Resident speedup vs repeated stateless calls |
 |---:|---:|
@@ -302,24 +302,24 @@ The WSL2 Nsight Systems runs did not expose every requested GPU memory/kernel su
 
 ### Conclusion
 
-M5 shifted database transfer from a per-search cost to an explicit preparation cost. It did not optimize the kernel, score download, or CPU Top-K. Its value depends on database reuse: cold one-shot work can regress, while sufficiently repeated query batches amortize preparation.
+The resident design shifted database transfer from a per-search cost to an explicit preparation cost. It did not optimize the kernel, score download, or CPU Top-K. Its value depends on database reuse: cold one-shot work can regress, while sufficiently repeated query batches amortize preparation.
 
 ## Reconciling Separate Runs
 
 The project intentionally retains raw outputs instead of forcing results into a single synthetic table:
 
-- M2 stage timing, M3/M4 comparisons, and M5 lifecycle experiments were separate executions.
+- Baseline timing, block/warp comparisons, and resident lifecycle experiments were separate executions.
 - Nominally identical `D=768` kernel values differ slightly across runs; this is normal measurement variance.
-- The M5 stateless H2D value is an observed outlier relative to M2. It is retained and explicitly caveated rather than rewritten.
+- The resident stateless H2D value is an observed outlier relative to the baseline run. It is retained and explicitly caveated rather than rewritten.
 - Kernel-only, stateless end-to-end, resident preparation, and resident warm-query timings describe different scopes and must not be mixed without labels.
 
 ## Reproducibility Artifacts
 
 - [`benchmarks/results/README.md`](../benchmarks/results/README.md) catalogs the retained CSV evidence.
-- [`scripts/run_m2_benchmarks.py`](../scripts/run_m2_benchmarks.py), [`run_m3_benchmarks.py`](../scripts/run_m3_benchmarks.py), [`run_m4_benchmarks.py`](../scripts/run_m4_benchmarks.py), and [`run_m5_benchmarks.py`](../scripts/run_m5_benchmarks.py) reproduce the milestone benchmark suites.
+- [`scripts/run_baseline_benchmarks.py`](../scripts/run_baseline_benchmarks.py), [`run_block_benchmarks.py`](../scripts/run_block_benchmarks.py), [`run_warp_benchmarks.py`](../scripts/run_warp_benchmarks.py), and [`run_resident_benchmarks.py`](../scripts/run_resident_benchmarks.py) reproduce the benchmark suites.
 - [`profiling/README.md`](../profiling/README.md) documents the retained summaries and profiler commands.
-- [`scripts/profile_nsys.sh`](../scripts/profile_nsys.sh), [`profile_ncu.sh`](../scripts/profile_ncu.sh), and [`profile_m5_nsys.sh`](../scripts/profile_m5_nsys.sh) reproduce the profiler collection.
-- [`scripts/plot_final_results.py`](../scripts/plot_final_results.py) regenerates the final figures directly from the M4 dimension CSV.
+- [`scripts/profile_nsys.sh`](../scripts/profile_nsys.sh), [`profile_ncu.sh`](../scripts/profile_ncu.sh), and [`profile_resident_nsys.sh`](../scripts/profile_resident_nsys.sh) reproduce the profiler collection.
+- [`scripts/plot_benchmark_results.py`](../scripts/plot_benchmark_results.py) regenerates the figures directly from the warp dimension CSV.
 
 ## Final Conclusion
 
@@ -331,4 +331,4 @@ The measured project story is:
 4. Warp-per-pair retained coalescing while lowering reduction overhead, reaching approximately 9.3x kernel speedup over naive in the primary `D=768` run.
 5. With kernel cost reduced, repeated database transfer became a system bottleneck; GPU residency removed that recurring work for prepared searches.
 
-M5 is the last implemented performance milestone. M5.5 finalizes documentation, evidence, visualization, and reproducibility without introducing a new optimization.
+The resident backend is the last implemented performance design. The repository documentation and retained evidence describe these implementations without adding another runtime optimization.

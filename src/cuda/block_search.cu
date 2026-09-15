@@ -17,8 +17,8 @@
 namespace vector_search {
 namespace {
 
-// M3 keeps the block size fixed so the experiment changes only the
-// thread/data mapping and reduction strategy relative to cuda-naive.
+// The block design keeps the block size fixed so the experiment changes only
+// the thread/data mapping and reduction strategy relative to cuda-naive.
 constexpr unsigned int kThreadsPerBlock = 256;
 
 std::size_t checked_product(std::size_t left, std::size_t right) {
@@ -174,7 +174,8 @@ float measure_synchronous_cuda_copy(
     return milliseconds;
 }
 
-// M3 maps one block to one query/database-vector pair. Threads in a warp
+// The block-per-vector design maps one block to one query/database-vector pair.
+// Threads in a warp
 // therefore walk adjacent dimensions of the same row before reducing their
 // partial dot products through shared memory.
 __global__ void block_similarity_kernel(
@@ -252,7 +253,7 @@ public:
         cudaDeviceProp properties{};
         VECTOR_SEARCH_CUDA_CHECK(cudaGetDeviceProperties(&properties, device));
 
-        // Unlike M1, each logical pair is a block, so no ceil-divide is
+        // Each logical pair is a block, so no ceil-divide is
         // needed. The explicit limit keeps the unsigned launch conversion
         // safe for larger size_t workloads.
         if (total_pairs >

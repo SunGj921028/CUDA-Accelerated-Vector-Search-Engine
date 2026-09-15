@@ -1,4 +1,4 @@
-# Final Architecture
+# Project Architecture
 
 ## Purpose and invariants
 
@@ -152,7 +152,7 @@ thread   -> one score
 
 The launch uses 256 threads per block. Because adjacent threads own adjacent
 rows, at a fixed dimension their database loads are `D * sizeof(float)`
-bytes apart. This frozen M1 implementation is the profiling baseline.
+bytes apart. This frozen naive implementation is the profiling baseline.
 
 ### `cuda-block`: one block per pair
 
@@ -165,7 +165,7 @@ synchronized tree reduce  -> one score
 
 Adjacent threads access adjacent dimensions, producing coalesced loads. The
 fixed 256-thread block and full reduction are intentionally preserved as the
-M3 experimental design.
+block-per-vector experimental design.
 
 ### `cuda-warp`: one warp per pair
 
@@ -182,11 +182,11 @@ warps therefore use one consistent mask for all `__shfl_down_sync` steps.
 This backend uses no explicit reduction shared memory and no block-wide
 barrier.
 
-### `cuda-warp-resident`: M4 kernel, persistent database
+### `cuda-warp-resident`: warp kernel, persistent database
 
-The resident backend duplicates the M4 warp kernel intentionally so the M5
-controlled variable is database lifetime, not arithmetic or launch mapping.
-Query and score buffers remain request-local.
+The resident backend duplicates the warp kernel intentionally so the controlled
+variable is database lifetime, not arithmetic or launch mapping. Query and
+score buffers remain request-local.
 
 ## Stateless CUDA data flow
 
@@ -238,7 +238,7 @@ prepared ------------------------------------+
    | search(query batch)                     | reload_database(...)
    |   allocate query/score buffers          | releases old database
    |   query H2D                             | allocates/uploads new database
-   |   unchanged M4 warp kernel              |
+   |   unchanged warp kernel                 |
    |   score D2H + CPU Top-K                 |
    |   release query/score buffers           |
    +---------------- repeat -----------------+
@@ -292,7 +292,7 @@ test suite rather than checksum equality alone.
 `benchmark_repeated_search` accepts an ordered request sequence, runs warm-up
 batches, and records every measured batch's host latency and backend timing.
 The CLI generates different deterministic query contents while reusing one
-database. This is the M5 path for comparing stateless searches with resident
+database. This is the resident path for comparing stateless searches with resident
 warm queries.
 
 ### Timing boundaries
@@ -370,7 +370,7 @@ asynchronous copy, FP16/Tensor Core path, external CUDA primitive/library,
 ANN index, distributed service, API server, or frontend.
 
 Those items are potential future experiments, not hidden or partially
-implemented parts of the final M0–M5 architecture. Historical reasoning and
-milestone measurements belong in `docs/optimization_log.md` and
+implemented parts of the current architecture. Experiment reasoning and
+measurements belong in `docs/optimization_log.md` and
 `docs/performance_report.md`; this document describes the repository as it
-exists after M5.5.
+exists today.

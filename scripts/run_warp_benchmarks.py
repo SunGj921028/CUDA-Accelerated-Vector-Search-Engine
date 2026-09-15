@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the controlled M4 CPU, cuda-naive, cuda-block, and cuda-warp benchmarks."""
+"""Run the controlled CPU, cuda-naive, cuda-block, and cuda-warp benchmarks."""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ def resolve_path(path: Path) -> Path:
 
 
 def default_binary() -> Path:
-    return REPOSITORY_ROOT / "build-m4-cuda-wsl" / "vector_search"
+    return REPOSITORY_ROOT / "build-cuda" / "vector_search"
 
 
 def parse_key_value_output(output: str) -> Dict[str, str]:
@@ -283,10 +283,10 @@ def main() -> int:
     all_rows = primary + dimensions + small
 
     output_dir = resolve_path(arguments.output_dir)
-    write_csv(output_dir / "m4_primary.csv", primary)
-    write_csv(output_dir / "m4_dimension.csv", dimensions)
-    write_csv(output_dir / "m4_small_workload.csv", small)
-    write_csv(output_dir / "m4_comparison.csv", all_rows)
+    write_csv(output_dir / "warp_primary.csv", primary)
+    write_csv(output_dir / "warp_dimension.csv", dimensions)
+    write_csv(output_dir / "warp_small_workload.csv", small)
+    write_csv(output_dir / "warp_comparison.csv", all_rows)
     print_summary(all_rows)
     return 0
 

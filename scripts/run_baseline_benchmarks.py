@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the M2 crossover, dimension, and stage-timing measurements.
+"""Run baseline crossover, dimension, and stage-timing measurements.
 
 The script intentionally uses only the Python standard library. The executable
 prints key=value records, so this runner can preserve the benchmark metadata
@@ -334,7 +334,7 @@ def main() -> int:
             run_pair(cpu_binary, cuda_binary, num_vectors, 128, **common)
             for num_vectors in CROSSOVER_SIZES
         ]
-        crossover_path = output_dir / "m2_crossover.csv"
+        crossover_path = output_dir / "baseline_crossover.csv"
         write_csv(crossover_path, crossover_rows)
         print_summary(
             "crossover -> {}".format(crossover_path),
@@ -347,7 +347,7 @@ def main() -> int:
             run_pair(cpu_binary, cuda_binary, 100_000, dimension, **common)
             for dimension in DIMENSIONS
         ]
-        dimension_path = output_dir / "m2_dimension.csv"
+        dimension_path = output_dir / "baseline_dimension.csv"
         write_csv(dimension_path, dimension_rows)
         print_summary(
             "dimension -> {}".format(dimension_path),
@@ -360,7 +360,7 @@ def main() -> int:
             run_stage_measurement(cuda_binary, num_vectors, dimension, **common)
             for num_vectors, dimension in STAGE_WORKLOADS
         ]
-        stage_path = output_dir / "m2_stage_timing.csv"
+        stage_path = output_dir / "stage_timing.csv"
         write_csv(stage_path, stage_rows)
         print_summary(
             "stages -> {}".format(stage_path),

@@ -49,7 +49,8 @@ struct BackendTiming {
     bool has_kernel_latency = false;
     double kernel_latency_milliseconds = 0.0;
 
-    // Detailed stage timing is opt-in so ordinary M1 benchmark runs retain
+    // Detailed stage timing is opt-in so ordinary naive-baseline benchmark
+    // runs retain
     // their original measurement behavior. CUDA backends populate these
     // fields when set_timing_breakdown_enabled(true) is requested.
     bool has_stage_timing = false;
@@ -61,7 +62,7 @@ struct BackendTiming {
     double cleanup_milliseconds = 0.0;
     double total_e2e_milliseconds = 0.0;
 
-    // M5 separates the one-time resident database preparation from the
+    // Resident mode separates the one-time database preparation from the
     // per-query pipeline. These fields are populated by resident backends
     // when detailed timing is enabled.
     bool has_database_preparation_timing = false;

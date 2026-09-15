@@ -1,7 +1,7 @@
 # CUDA Backends
 
 The repository preserves each measured CUDA design as a separate backend so
-the optimization progression remains inspectable and reproducible. All
+the implementation differences remain inspectable and reproducible. All
 backends compute exact FP32 dot products and return results through the shared
 deterministic CPU Top-K implementation.
 
@@ -25,12 +25,12 @@ allocate device buffers
   -> release device buffers
 ```
 
-Keeping this pipeline constant isolates the effect of the M1, M3, and M4
-kernel mappings. Every CUDA API operation and kernel launch is checked.
+Keeping this pipeline constant isolates the effect of the naive, block, and
+warp kernel mappings. Every CUDA API operation and kernel launch is checked.
 
 ## Resident Backend
 
-M5 adds an explicit `ResidentSearchBackend` lifecycle:
+The resident backend adds an explicit `ResidentSearchBackend` lifecycle:
 
 ```text
 prepare_database()
@@ -39,7 +39,7 @@ prepare_database()
 ```
 
 Preparation owns the database device allocation and one synchronous H2D
-upload. Each prepared search still uploads queries, launches the exact M4 warp
+upload. Each prepared search still uploads queries, launches the exact warp
 kernel, downloads scores, and runs CPU Top-K. Query and score buffers remain
 per-search allocations. Preparation timing is reported separately from warm
 query timing, and CUDA resources are held through RAII.
@@ -49,4 +49,4 @@ repeated query batches and is not claimed to improve one-shot cold latency.
 
 See [`docs/architecture.md`](../../docs/architecture.md) for component and
 lifecycle details and [`docs/performance_report.md`](../../docs/performance_report.md)
-for the measured progression.
+for the measured comparisons.

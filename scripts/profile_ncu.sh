@@ -24,15 +24,15 @@ backend="${5:-cuda-naive}"
 case "$backend" in
     cuda-naive)
         kernel_name="naive_similarity_kernel"
-        report_prefix="m2"
+        report_prefix="naive"
         ;;
     cuda-block)
         kernel_name="block_similarity_kernel"
-        report_prefix="m3_cuda-block"
+        report_prefix="block"
         ;;
     cuda-warp)
         kernel_name="warp_similarity_kernel"
-        report_prefix="m4_cuda-warp"
+        report_prefix="warp"
         ;;
     *)
         echo "unsupported CUDA backend: $backend (expected cuda-naive, cuda-block, or cuda-warp)" >&2
