@@ -467,8 +467,6 @@ configuration, builds, or tests and is unrelated to CUDA.
   conclusions for each named implementation stage.
 - [`docs/optimization_log.md`](docs/optimization_log.md): experiment
   baselines, evidence, hypotheses, changes, results, and decisions.
-- [`docs/resume_and_interview_notes.md`](docs/resume_and_interview_notes.md):
-  concise, evidence-bounded project explanation and interview notes.
 - [`benchmarks/results/README.md`](benchmarks/results/README.md): raw result
   catalog.
 - [`profiling/README.md`](profiling/README.md): profiler artifact policy and
